@@ -133,6 +133,27 @@ def connect_controller_to_system(ctrl, system, attrs):
 		        f=True
 		)
 
+def build_curve_from_joint(jointPos, counter):
+	#This string will house the command to create our curve.
+	buildCurve="curve -d 1 "
+	#Another counter integer for the for loop
+	cvCounter=0
+	#Loops over and adds the position of each joint to the buildCurve string.
+	for i in range(cvCounter, counter + 1):
+		buildCurve = "{curve} -p {jpos}".format(
+	                curve = buildCurve,
+	                jpos = " ".join([str(pos) for pos in jointPos[i]])
+	        )
+	buildCurve = buildCurve + ";"
+	#Adds the end terminator to the build curve command
+	#Evaluates the $buildCurve string as a Maya command. (creates the curve running through the joints)
+	return str(mel.eval(buildCurve))
+
+def add_name_to_attr(jointCtrlObj, obj_names):
+	for obj, name in obj_names.iteritems():
+		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
+		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
+		
 #---------------------------------------------------------------------------------#
 # Classes
 #---------------------------------------------------------------------------------#
@@ -171,20 +192,7 @@ def create_dynamic_chain():
 		jointPos.append(joint(currentJoint, q=1,p=1,a=1))
 		#Now that $jointPos[] holds the world space coords of our joints, we need to build a cv curve
 		#with points at each XYZ coord.
-		#This string will house the command to create our curve.
-		buildCurve="curve -d 1 "
-		#Another counter integer for the for loop
-		cvCounter=0
-		#Loops over and adds the position of each joint to the buildCurve string.
-		for i in range(cvCounter, counter + 1):
-			buildCurve = "{curve} -p {jpos}".format(
-				curve = buildCurve,
-				jpos = " ".join([str(pos) for pos in jointPos[i]])
-			)
-		buildCurve = buildCurve + ";"
-		#Adds the end terminator to the build curve command
-		#Evaluates the $buildCurve string as a Maya command. (creates the curve running through the joints)
-		nameOfCurve = str(mel.eval(buildCurve))
+		nameOfCurve = build_curve_from_joint(jointPos, counter)	
 		#Make curve dynamic.
 		select(nameOfCurve)
 		#mel.makeCurvesDynamicHairs()
@@ -236,41 +244,19 @@ def create_dynamic_chain():
 		nameOfHairSystem=nameOfFollicle[0][8:sizeOfString]
 		sizeOfString=int(nameOfHairSystem)
 		nameOfHairSystem=("hairSystemShape" + str(sizeOfString))
-		#Add special attribute to house name of hairSystem
-		addAttr(jointCtrlObj,
-			ln='nameOfHairShapeNode',dt="string",keyable=False)
-		setAttr((jointCtrlObj + ".nameOfHairShapeNode"),(nameOfHairSystem),
-			lock=True,type="string")
-		#Add special attribute to house name of follicle
-		addAttr(jointCtrlObj,
-			ln='nameOfFollicleNode',dt="string",keyable=False)
-		setAttr((jointCtrlObj + ".nameOfFollicleNode"),(nameOfFollicle[0]),
-			lock=True,type="string")
-		#Add special attribute to house name of dynamic curve
-		addAttr(jointCtrlObj,
-			ln='nameOfDynCurve',dt="string",keyable=False)
-		setAttr((jointCtrlObj + ".nameOfDynCurve"),(nameOfDynCurve),
-			lock=True,type="string")
-		#Add special attribute to house name of tip constraint
+		# Store all the names to the controls as an attr.
+		obj_names = {
+		        nameOfHairSystem : 'nameOfHairShapeNode',
+		        nameOfFollicle[0] : 'nameOfFollicleNode',
+		        nameOfDynCurve : 'nameOfDynCurve',
+		        nameOfUtilityNode : 'nameOfMultiDivNode',
+		        baseJoint : 'baseJoint',
+		        endJoint : 'endJoint',
+		}
 		if nameOfHairConstraint:
-			addAttr(jointCtrlObj,
-				ln='nameOfTipConstraint',dt="string",keyable=False)
-			setAttr((jointCtrlObj + ".nameOfTipConstraint"),(nameOfHairConstraint[0]),
-				lock=True,type="string")
-		#Add special attribute to house name of multi/div node
-		addAttr(jointCtrlObj,
-			ln='nameOfMultiDivNode',dt="string",keyable=False)
-		setAttr((jointCtrlObj + ".nameOfMultiDivNode"),(nameOfUtilityNode),
-			lock=True,type="string")
-		#Add special attribute to base and end joint names
-		addAttr(jointCtrlObj,
-			ln='baseJoint',dt="string",keyable=False)
-		addAttr(jointCtrlObj,
-			ln='endJoint',dt="string",keyable=False)
-		setAttr((jointCtrlObj + ".baseJoint"),(baseJoint),
-			lock=True,type="string")
-		setAttr((jointCtrlObj + ".endJoint"),(endJoint),
-			lock=True,type="string")
+			obj_names[nameOfHairConstraint] = 'nameOfTipConstraint'
+		add_name_to_attr(jointCtrlObj, obj_names)
+		
 		#Add special attribute to house baking state
 		addAttr(jointCtrlObj,
 			ln='bakingState',at='bool')
