@@ -6,7 +6,14 @@
     slu
 
 @description:
-    Overlap tool
+    Overlap tool - The tool would be something that we can apply to things 
+    that need secondary animation like hair, tails, etc.. When applied it will 
+    perform the secondary animation on the joints applied and have a node in which 
+    we can can control the variables such as gravity, stiffness, dampening, speed, 
+    etc... and a blend control to be able to dial in and out of specified poses we may 
+    assign to the joints during the performance.  
+    so in theory, sometimes we may be letting the simulation take care of the 
+    secondary and other times we may want to control specific poses. 
     
 @departments:
     - Animation
@@ -33,10 +40,103 @@ from maya_tools.ui.gui_tool_kit import *
 # Constants
 #---------------------------------------------------------------------------------#
 
+def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
+	curveInfoNode=str(arclen(nameOfDynCurve, ch=1))
+	#Create curve info node
+	curveInfoNode=str(rename(curveInfoNode,
+                (baseJoint + "CurveInfoNode")))
+	#Create mult/div node
+	nameOfUtilityNode=str(shadingNode('multiplyDivide', asUtility=True))
+	nameOfUtilityNode=str(rename(nameOfUtilityNode,
+                (baseJoint + "MultiDivNode")))
+	#Create condition node
+	nameOfConditionNode=shadingNode('condition', asUtility=True)
+	nameOfConditionNode=rename(nameOfConditionNode,
+                (baseJoint + "ConditionNode"))
+	#Setup multi/div node
+	setAttr((nameOfUtilityNode + ".operation"), 2)
+	connectAttr((curveInfoNode + ".arcLength"),
+                    (nameOfUtilityNode + ".input1X"), force=True)
+	setAttr((nameOfUtilityNode + ".input2X"),(getAttr(curveInfoNode + ".arcLength")))
+	#Setup condition node
+	connectAttr((nameOfUtilityNode + ".outputX"),
+                    (str(nameOfConditionNode) + ".firstTerm"), force=True)
+	connectAttr((nameOfUtilityNode + ".outputX"),
+                    (str(nameOfConditionNode) + ".colorIfFalseR"),force=True)
+	setAttr((str(nameOfConditionNode) + ".operation"), 4)
+	setAttr((str(nameOfConditionNode) + ".secondTerm"), 1.0)
+	setAttr((str(nameOfConditionNode) + ".colorIfTrueR"), 1.0)
+	#Initial selection going into the while loop
+	select(baseJoint)
+	currentJoint=baseJoint
+	#Will loop through all the joints between the base and end by pickwalking through them.
+	#The loop connects the scaleX of each joint to the output of the multi/div node.
+	while currentJoint != endJoint:
+		connectAttr((str(nameOfConditionNode) + ".outColorR"),
+	                    (currentJoint + ".scaleX"), f=True)
+		pickWalk(d='down')
+		sel=mc.ls(selection=True)
+		currentJoint=sel[0]
+
+def add_dynamic_attributes(jointCtrlObj):
+	addAttr(jointCtrlObj,
+	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=0.001)
+	addAttr(jointCtrlObj,
+                min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
+	addAttr(jointCtrlObj,
+                min=0,ln='damping',max=100,keyable=True,at='double',dv=0)
+	addAttr(jointCtrlObj,
+                min=0,ln="drag",max=1,keyable=True,at='double',dv=.05)
+	addAttr(jointCtrlObj,
+                min=0,ln='friction',max=1,keyable=True,at='double',dv=0.5)
+	addAttr(jointCtrlObj,
+                min=0,ln="gravity",max=10,keyable=True,at='double',dv=1)
+	addAttr(jointCtrlObj,
+                min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=0.5)
+	addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
+	setAttr((jointCtrlObj + ".turbulenceCtrl"),
+                lock=True)
+	addAttr(jointCtrlObj,
+                min=0,ln="strength",max=1,keyable=True,at='double',dv=0)
+	addAttr(jointCtrlObj,
+                min=0,ln="frequency",max=2,keyable=True,at='double',dv=0.2)
+	addAttr(jointCtrlObj,
+                min=0,ln="speed",max=2,keyable=True,at='double',dv=0.2)
+
+def lock_and_hide_attr(jointCtrlObj):
+	attrs = ['tx', 'ty', 'tz',
+	         'rx', 'ry', 'rz',
+	         'sx', 'sy', 'sz',]
+	for attr in attrs:
+		setAttr('{obj}.{attr}'.format(obj = jointCtrlObj, attr = attr), 
+	        	lock=True, 
+	                keyable=False
+		)
+		
+def connect_controller_to_system(ctrl, system, attrs):
+	""" Connect the system attributes to the controllers.
+	Args:
+		ctrl - (str)
+			Name of the controller
+		system - (str)
+			Name of the system to connect
+		attrs - (dict)
+			attributes to connect.  The key represents
+			the controllers attr and the value represents
+			the systems attr.
+
+	"""
+	for c_attr, s_attr in attrs.iteritems():
+		connectAttr(
+		        '{ctrl}.{attr}'.format(ctrl=ctrl, attr=c_attr), 
+		        '{system}.{attr}'.format(system=system, attr=s_attr), 
+		        f=True
+		)
+
 #---------------------------------------------------------------------------------#
 # Classes
 #---------------------------------------------------------------------------------#
-def dynJointChain():
+def create_dynamic_chain():
 	sel=mc.ls(selection=True)
 	#Store the current selection into an string array.
 	#Store the name of the base and end joints into strings.
@@ -49,12 +149,9 @@ def dynJointChain():
 	#Counter integer used in the while loop to determine the proper index in the vector array.
 	counter=0
 	#Check to ensure proper selection
-	if not ((objectType(baseJoint,
-		isType="joint")) and (objectType(endJoint,
-		isType="joint"))):
+	if not ((objectType(baseJoint, isType="joint")) and 
+	        (objectType(endJoint, isType="joint"))):
 		mel.warning("Please select a base and tip joint to make dynamic.")
-		
-	
 	else:
 		select(baseJoint)
 		#Initial selection going into the while loop/
@@ -67,7 +164,6 @@ def dynJointChain():
 			sel=mc.ls(selection=True)
 			currentJoint=sel[0]
 			counter+=1
-			
 		
 		sel=mc.ls(selection=True)
 		#Theses 3 lines store the position of the end joint that the loop will miss.
@@ -80,15 +176,15 @@ def dynJointChain():
 		#Another counter integer for the for loop
 		cvCounter=0
 		#Loops over and adds the position of each joint to the buildCurve string.
-		while cvCounter<=counter:
-			buildCurve=(buildCurve + " -p " + " ".join([str(pos) for pos in jointPos[cvCounter]]))
-			cvCounter+=1
-			
-		
-		buildCurve=buildCurve + ";"
+		for i in range(cvCounter, counter + 1):
+			buildCurve = "{curve} -p {jpos}".format(
+				curve = buildCurve,
+				jpos = " ".join([str(pos) for pos in jointPos[i]])
+			)
+		buildCurve = buildCurve + ";"
 		#Adds the end terminator to the build curve command
 		#Evaluates the $buildCurve string as a Maya command. (creates the curve running through the joints)
-		nameOfCurve=str(mel.eval(buildCurve))
+		nameOfCurve = str(mel.eval(buildCurve))
 		#Make curve dynamic.
 		select(nameOfCurve)
 		#mel.makeCurvesDynamicHairs()
@@ -115,49 +211,7 @@ def dynJointChain():
 		#Make Joint Chain Stretchy
 		nameOfUtilityNode=''
 		if checkBoxGrp('stretchCheckbox',q=1,value1=1):
-			curveInfoNode=str(arclen(nameOfDynCurve,
-				ch=1))
-			#Create curve info node
-			curveInfoNode=str(rename(curveInfoNode,
-				(baseJoint + "CurveInfoNode")))
-			#Create mult/div node
-			nameOfUtilityNode=str(shadingNode(asUtility='multiplyDivide'))
-			nameOfUtilityNode=str(rename(nameOfUtilityNode,
-				(baseJoint + "MultiDivNode")))
-			#Create condition node
-			nameOfConditionNode=shadingNode(asUtility='condition')
-			nameOfConditionNode=rename(nameOfConditionNode,
-				(baseJoint + "ConditionNode"))
-			#Setup multi/div node
-			setAttr((nameOfUtilityNode + ".operation"),
-				2)
-			connectAttr((nameOfUtilityNode + ".input1X"),
-				force=(curveInfoNode + ".arcLength"))
-			setAttr((nameOfUtilityNode + ".input2X"),(getAttr(curveInfoNode + ".arcLength")))
-			#Setup condition node
-			connectAttr((str(nameOfConditionNode) + ".firstTerm"),
-				force=(nameOfUtilityNode + ".outputX"))
-			connectAttr((str(nameOfConditionNode) + ".colorIfFalseR"),
-				force=(nameOfUtilityNode + ".outputX"))
-			setAttr((str(nameOfConditionNode) + ".operation"),
-				4)
-			setAttr((str(nameOfConditionNode) + ".secondTerm"),
-				1.0)
-			setAttr((str(nameOfConditionNode) + ".colorIfTrueR"),
-				1.0)
-			#Initial selection going into the while loop
-			select(baseJoint)
-			currentJoint=baseJoint
-			#Will loop through all the joints between the base and end by pickwalking through them.
-			#The loop connects the scaleX of each joint to the output of the multi/div node.
-			while currentJoint != endJoint:
-				connectAttr((currentJoint + ".scaleX"),
-					f=(str(nameOfConditionNode) + ".outColorR"))
-				pickWalk(d='down')
-				sel=mc.ls(selection=True)
-				currentJoint=sel[0]
-				
-			
+			stretch_chain(nameOfDynCurve, baseJoint, endJoint)
 			
 		select(nameOfDynCurve)
 		#Display Current Position of Hair
@@ -173,30 +227,8 @@ def dynJointChain():
 		#Point Constrain Control Object to the end joint
 		pointConstraint(endJoint,jointCtrlObj)
 		#Add attributes to controller for the dynamics
-		addAttr(jointCtrlObj,
-			min=0,ln='stiffness',max=1,keyable=True,at='double',dv=0.001)
-		addAttr(jointCtrlObj,
-			min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
-		addAttr(jointCtrlObj,
-			min=0,ln='damping',max=100,keyable=True,at='double',dv=0)
-		addAttr(jointCtrlObj,
-			min=0,ln="drag",max=1,keyable=True,at='double',dv=.05)
-		addAttr(jointCtrlObj,
-			min=0,ln='friction',max=1,keyable=True,at='double',dv=0.5)
-		addAttr(jointCtrlObj,
-			min=0,ln="gravity",max=10,keyable=True,at='double',dv=1)
-		addAttr(jointCtrlObj,
-			min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=0.5)
-		addAttr(jointCtrlObj,
-			ln="turbulenceCtrl",at='bool',keyable=True)
-		setAttr((jointCtrlObj + ".turbulenceCtrl"),
-			lock=True)
-		addAttr(jointCtrlObj,
-			min=0,ln="strength",max=1,keyable=True,at='double',dv=0)
-		addAttr(jointCtrlObj,
-			min=0,ln="frequency",max=2,keyable=True,at='double',dv=0.2)
-		addAttr(jointCtrlObj,
-			min=0,ln="speed",max=2,keyable=True,at='double',dv=0.2)
+		add_dynamic_attributes(jointCtrlObj)
+		
 		#Determine what the name of the hair system is
 		nameOfHairSystem=''
 		sizeOfString=len(nameOfFollicle[0])
@@ -246,39 +278,35 @@ def dynJointChain():
 		addAttr(jointCtrlObj,
 			ln='isStretchy',at='bool')
 		if checkBoxGrp('stretchCheckbox',q=1,value1=1):
-			setAttr((jointCtrlObj + ".isStretchy"),
-				1)
-			#Overide the Hair dynamics so that the follicle controls the curve dynamics
-			
+			setAttr((jointCtrlObj + ".isStretchy"), 1)
+		
+		#Overide the Hair dynamics so that the follicle controls the curve dynamics
 		select(nameOfFollicle)
 		nameOfFollicle=pickWalk(d='down')
-		setAttr((nameOfFollicle[0] + ".overrideDynamics"),
-			1)
+		setAttr((nameOfFollicle[0] + ".overrideDynamics"), 1)
+		
 		#Set the dynamic chain to hang from the base joint (not both ends)
-		setAttr((nameOfFollicle[0] + ".pointLock"),
-			1)
+		setAttr((nameOfFollicle[0] + ".pointLock"), 1)
+		 
 		#Connect attributes on the controller sphere to the follicle node
-		#connectAttr((nameOfFollicle[0] + ".stiffness"),
-		#	(jointCtrlObj + ".stiffness"), f=True, l=False)
-		connectAttr((jointCtrlObj + ".stiffness"),
-		            (nameOfFollicle[0] + ".stiffness"), f=True)
-		connectAttr((jointCtrlObj + ".lengthFlex"), 
-		            (nameOfFollicle[0] + ".lengthFlex"), f=True)
-		connectAttr((jointCtrlObj + ".damping"), 
-		            (nameOfFollicle[0] + ".damp"), f=True)
+		ctrl_to_follicle_attrs = {
+		        'stiffness' : 'stiffness',
+		        'lengthFlex' : 'lengthFlex',
+		        'damping' : 'damp'
+		}
+		connect_controller_to_system(jointCtrlObj, nameOfFollicle[0], ctrl_to_follicle_attrs)
+	
 		#Connect attribute on the controller sphere to the hair system node
-		connectAttr((jointCtrlObj + ".drag"),
-		            (nameOfHairSystem + ".drag"), f=True)
-		connectAttr((jointCtrlObj + ".friction"),
-		            (nameOfHairSystem + ".friction"), f=True)
-		connectAttr((jointCtrlObj + ".gravity"), 
-		            (nameOfHairSystem + ".gravity"), f=True)
-		connectAttr((jointCtrlObj + ".strength"),
-		            (nameOfHairSystem + ".turbulenceStrength"), f=True)
-		connectAttr((jointCtrlObj + ".frequency"), 
-		            (nameOfHairSystem + ".turbulenceFrequency"), f=True)
-		connectAttr((jointCtrlObj + ".speed"), 
-		            (nameOfHairSystem + ".turbulenceSpeed"), f=True)
+		ctrl_to_hairsystem_attrs = {
+		        'drag' : 'drag',
+		        'friction' : 'friction',
+		        'gravity' : 'gravity',
+		        'strength' : 'turbulenceStrength',
+		        'frequency' : 'turbulenceFrequency',
+		        'speed' : 'turbulenceSpeed',
+		}
+		connect_controller_to_system(jointCtrlObj, nameOfHairSystem, ctrl_to_hairsystem_attrs)
+		
 		#Connect scale of controller to the size attr
 		connectAttr((jointCtrlObj + ".controllerSize"),
 		            (jointCtrlObj + ".scaleX"), f=True)
@@ -286,25 +314,10 @@ def dynJointChain():
 		            (jointCtrlObj + ".scaleY"), f=True)
 		connectAttr((jointCtrlObj + ".controllerSize"), 
 		            (jointCtrlObj + ".scaleZ"), f=True)
+		
 		#Lock And Hide Attributes on Control Object.
-		setAttr((jointCtrlObj + ".tx"),
-			lock=True,keyable=False)
-		setAttr((jointCtrlObj + ".ty"),
-			lock=True,keyable=False)
-		setAttr((jointCtrlObj + ".tz"),
-			lock=True,keyable=False)
-		setAttr((jointCtrlObj + ".rx"),
-			lock=True,keyable=False)
-		setAttr((jointCtrlObj + ".ry"),
-			lock=True,keyable=False)
-		setAttr((jointCtrlObj + ".rz"),
-			lock=True,keyable=False)
-		setAttr((jointCtrlObj + ".sx"),
-			lock=False,keyable=False)
-		setAttr((jointCtrlObj + ".sy"),
-			lock=False,keyable=False)
-		setAttr((jointCtrlObj + ".sz"),
-			lock=False,keyable=False)
+		lock_and_hide_attr(jointCtrlObj)
+		
 		#Build the splineIK handle using the dynamic curve.
 		select(baseJoint,endJoint,nameOfDynCurve)
 		nameOfIKHandle=ikHandle(ccv=False,sol='ikSplineSolver')
@@ -325,11 +338,11 @@ def dynJointChain():
 			mel.warning("No parent hierarchy was found for the dynamic chain.\n")
 		else:
 			parent(follicleGrpNode,parentOfBaseJoint)
-			#Parent the follicle into heirarchy
+			# Parent the follicle into heirarchy
 			parent(nameOfDynCurve, w=True)
 			
 		sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
-		#Set dynamic chain attributes according to creation options
+		# Set dynamic chain attributes according to creation options
 		sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
 		sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
 		setAttr((baseJoint + "DynChainControl.stiffness"),
@@ -338,34 +351,34 @@ def dynJointChain():
 			sliderDamping)
 		setAttr((baseJoint + "DynChainControl.drag"),
 			sliderDrag)
-		#Group the dynamic chain nodes
+		# Group the dynamic chain nodes
 		nameOfGroup=str(group(jointCtrlObj,nameOfDynCurve,nameOfIKHandle[0],nameOfHairSystem,
 			name=(baseJoint + "DynChainGroup")))
-		#If the chain has a tip constraint, then parent this under the main group to keep things tidy.
+		# If the chain has a tip constraint, then parent this under the main group to keep things tidy.
 		if checkBoxGrp('tipConstraintCheckbox',q=1,value1=1):
 			parent(nameOfHairConstraint[0],nameOfGroup)
 			
-		setAttr((nameOfDynCurve + ".visibility"),
-			0)
-		#Turn the visibility of everything off to reduce viewport clutter.
-		setAttr((nameOfIKHandle[0] + ".visibility"),
-			0)
-		setAttr((nameOfDynCurve + ".visibility"),
-			0)
-		setAttr((follicleGrpNode[0] + ".visibility"),
-			0)
-		setAttr((nameOfHairSystem + ".visibility"),
-			0)
-		#Delete useless 'hairsystemoutputcurves' group node
+		# Turn the visibility of everything off to reduce viewport clutter.
+		items_to_hide = [
+		        nameOfDynCurve,
+		        nameOfIKHandle[0],
+		        follicleGrpNode[0],
+		        nameOfHairSystem,
+		]
+		change_visibility(items_to_hide, visibility=False)
+		
+		# Delete useless 'hairsystemoutputcurves' group node
 		select(nameOfHairSystem)
 		nameOfGarbageGrp=pickWalk(d='up')
 		delete(nameOfGarbageGrp[0] + "OutputCurves")
-		#Select dynamic chain controller for user
+		# Select dynamic chain controller for user
 		select(baseJoint + "DynChainControl")
-		#Print feedback for user
+		# Print feedback for user
 		print "Dynamic joint chain successfully setup!\n"
 		
-	
+
+def change_visibility(items, visibility):
+	[setAttr("{0}.visibility".format(item), visibility) for item in items]
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								Collisions Procedure
@@ -596,7 +609,7 @@ def deleteDynChain():
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
 #///////////////////////////////////////////////////////////////////////////////////////
-def cgTkDynChain():
+def main():
 	if window('dynChainWindow',q=1,ex=1):
 		deleteUI('dynChainWindow')
 		#Main Window
@@ -646,7 +659,7 @@ def cgTkDynChain():
 	#Button Layouts
 	rowColumnLayout(nc=2,cw=[(1, 175), (2, 150)])
 	text("Select base joint, shift select tip: ")
-	button(c=lambda *args: overlap_tool.dynJointChain(),label="Make Dynamic")
+	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
 	text("Select control, shift select collider(s): ")
 	button(c=lambda *args: overlap_tool.collideWithChain(),label="Make Collide")
 	text("Select control: ")
@@ -666,3 +679,5 @@ def cgTkDynChain():
 	showWindow('dynChainWindow')
 	
 
+if __name__ == "__main__":
+	main()
