@@ -6,7 +6,8 @@
     slu
 
 @description:
-    Overlap tool - The tool would be something that we can apply to things 
+    Overlap tool - Rewritten from a basis from the CG Toolkits tool to apply 
+    secondary motion.  The tool would be something that we can apply to things 
     that need secondary animation like hair, tails, etc.. When applied it will 
     perform the secondary animation on the joints applied and have a node in which 
     we can can control the variables such as gravity, stiffness, dampening, speed, 
@@ -30,6 +31,7 @@
 import overlap_tool
 import maya.cmds as mc
 import maya.mel as mm
+import pymel
 from pymel.all import *
 
 # External
@@ -39,6 +41,21 @@ from maya_tools.ui.gui_tool_kit import *
 #---------------------------------------------------------------------------------#
 # Constants
 #---------------------------------------------------------------------------------#
+
+#---------------------------------------------------------------------------------#
+# Helper Functions 
+#---------------------------------------------------------------------------------#
+
+def change_visibility(items, visibility):
+	""" Change the visiblity of all the items.
+	Args:
+		items - (list)
+			Items to change the visiblity
+		visibility - (bool)
+			Whether the item should be visible
+
+	"""
+	[setAttr("{0}.visibility".format(item), visibility) for item in items]
 
 def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
 	curveInfoNode=str(arclen(nameOfDynCurve, ch=1))
@@ -79,6 +96,11 @@ def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
 		currentJoint=sel[0]
 
 def add_dynamic_attributes(jointCtrlObj):
+	""" Add all the attributes to the controller.
+	Args:
+		jointCtrlObj - (str)
+			Name of the controller object.
+	"""
 	addAttr(jointCtrlObj,
 	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=0.001)
 	addAttr(jointCtrlObj,
@@ -102,8 +124,15 @@ def add_dynamic_attributes(jointCtrlObj):
                 min=0,ln="frequency",max=2,keyable=True,at='double',dv=0.2)
 	addAttr(jointCtrlObj,
                 min=0,ln="speed",max=2,keyable=True,at='double',dv=0.2)
+	addAttr(jointCtrlObj,
+	        min=0, ln="blend",max=1,keyable=True,at='double',dv=1.0)
 
 def lock_and_hide_attr(jointCtrlObj):
+	""" Lock the attribute and hide it from the menu.
+	Args:
+		jointCtrlObj - (str)
+			Name of the controller object
+	"""
 	attrs = ['tx', 'ty', 'tz',
 	         'rx', 'ry', 'rz',
 	         'sx', 'sy', 'sz',]
@@ -134,6 +163,14 @@ def connect_controller_to_system(ctrl, system, attrs):
 		)
 
 def build_curve_from_joint(jointPos, counter):
+	""" Build the curve from the joint positions.
+	Args:
+		jointPos - (list)
+	        	List of joint positions containing [x,y,z]
+	        counter - (int)
+	        	Number of joint positions
+
+	"""
 	#This string will house the command to create our curve.
 	buildCurve="curve -d 1 "
 	#Another counter integer for the for loop
@@ -150,12 +187,19 @@ def build_curve_from_joint(jointPos, counter):
 	return str(mel.eval(buildCurve))
 
 def add_name_to_attr(jointCtrlObj, obj_names):
+	""" Add specified names to the attributes.
+	Args:
+		jointCtrlObj - (str)
+	        	Name of the controller object
+	        obj_names - (dict)
+	        	Dict with obj as keys and names as values
+	"""
 	for obj, name in obj_names.iteritems():
 		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
 		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
 		
 #---------------------------------------------------------------------------------#
-# Classes
+# Main Functions
 #---------------------------------------------------------------------------------#
 def create_dynamic_chain():
 	sel=mc.ls(selection=True)
@@ -198,13 +242,9 @@ def create_dynamic_chain():
 		#mel.makeCurvesDynamicHairs()
 		mm.eval('makeCurvesDynamicHairs false false true')
 		#Determine what the name of the dynamic curve is
-		nameOfDynCurve=''
-		sizeOfString=len(nameOfCurve)
-		sizeOfString+=1
-		nameOfDynCurve=nameOfCurve[5:sizeOfString]
-		sizeOfString=int(nameOfDynCurve)
-		sizeOfString+=1
-		nameOfDynCurve=("curve" + str(sizeOfString))
+		nameOfDynCurve=nameOfCurve[5:len(nameOfCurve) + 1]
+		dynCurveInstance=str(int(nameOfDynCurve) + 1)
+		nameOfDynCurve="curve{0}".format(dynCurveInstance)
 		#Create Tip Constraint
 		nameOfHairConstraint=[]
 		if checkBoxGrp('tipConstraintCheckbox',q=1,value1=1):
@@ -309,6 +349,10 @@ def create_dynamic_chain():
 		nameOfIKHandle=ikHandle(ccv=False,sol='ikSplineSolver')
 		nameOfIKHandle[0]=str(rename(nameOfIKHandle[0],
 			(baseJoint + "ikHandle")))
+		
+		connectAttr((jointCtrlObj + ".blend"), 
+		            (nameOfIKHandle[0] + ".ikBlend"), f=True)
+	
 		#Rename Ctrl Obj
 		jointCtrlObj=str(rename(jointCtrlObj,
 			(baseJoint + "DynChainControl")))
@@ -352,19 +396,18 @@ def create_dynamic_chain():
 		        nameOfHairSystem,
 		]
 		change_visibility(items_to_hide, visibility=False)
-		
+			
 		# Delete useless 'hairsystemoutputcurves' group node
 		select(nameOfHairSystem)
 		nameOfGarbageGrp=pickWalk(d='up')
 		delete(nameOfGarbageGrp[0] + "OutputCurves")
 		# Select dynamic chain controller for user
 		select(baseJoint + "DynChainControl")
+		
+		addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 		# Print feedback for user
 		print "Dynamic joint chain successfully setup!\n"
 		
-
-def change_visibility(items, visibility):
-	[setAttr("{0}.visibility".format(item), visibility) for item in items]
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								Collisions Procedure
@@ -472,43 +515,43 @@ def bakeDynChain():
 	#Filter selection to contain only dynamic chain controllers.
 	for obj in initialSel:
 		if mel.attributeExists("nameOfHairShapeNode", obj):
-			allCtrls[i]=str(obj)
-			i+=1
-			
+			allCtrls.append(str(obj))
+			i += 1
 		
-	progressWindow(status="Baking Joint Chains:",
-		title="CGToolkit's Dynamic Joint Chain:",
+	progressWindow(
+	        status="Baking Joint Chains:",
+		title="RFX Dynamic Joint Chain:",
 		maxValue=100,
 		minValue=0,
 		isInterruptable=True,
-		progress=amount)
+		progress=amount
+	)
 	#Create a progress window
 	#Construct frame range variable
 	frameRangeToBake=''
 	startFrame=float(intField('startFrame',query=1,value=1))
 	endFrame=float(intField('endFrame',query=1,value=1))
-	frameRangeToBake=("\"" + str(startFrame) + ":" + str(endFrame) + "\"")
+	frameRangeToBake = '"{sf}:{ef}"'.format(sf = str(startFrame), ef = str(endFrame))
 	j=1
 	#For all of the selected chain controllers.
 	for obj in allCtrls:
-		if progressWindow(query=1,isCancelled=1):
+		if progressWindow(query=1, isCancelled=1):
 			break
 			# Check if the dialog has been cancelled
 			# Check if end condition has been reached
 			
-		if progressWindow(query=1,progress=1)>=100:
+		if progressWindow(query=1, progress=1) >= 100:
 			break
 			
 		amount=((100 / i) * j)
 		progressWindow(edit=1,progress=amount)
 		progressWindow(edit=1,status=("Baking chain " + str(j) + " of " + str(i) + " :"))
 		j+=1
-		chainCtrl=str(obj)
-		baseJoint=str(getAttr(chainCtrl + ".baseJoint"))
-		endJoint=str(getAttr(chainCtrl + ".endJoint"))
-		bakingJoints="{\""
-		currentJoint=[]
-		currentJoint[0]=endJoint
+		chainCtrl = str(obj)
+		baseJoint = str(getAttr(chainCtrl + ".baseJoint"))
+		endJoint = str(getAttr(chainCtrl + ".endJoint"))
+		bakingJoints = "{\""
+		currentJoint = [endJoint]
 		#Determine joints to be baked
 		while currentJoint[0] != baseJoint:
 			bakingJoints=(bakingJoints + currentJoint[0] + "\", \"")
@@ -528,7 +571,7 @@ def bakeDynChain():
 		#Print feedback to user
 		print "All joints controlled by " + chainCtrl + " have now been baked!\n"
 		
-	progressWindow()
+	progressWindow(endProgress = True)
 	
 
 #///////////////////////////////////////////////////////////////////////////////////////
@@ -560,27 +603,37 @@ def deleteDynChain():
 			
 		
 	if error == 0:
-		hairSystemName=[]
+		#hairSystemName=[]
 		#Delete Hair System Node
-		hairSystemName[0]=str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
-		select(hairSystemName[0])
+		#hairSystemName[0]=str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
+		hairSystemName = str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
+		##select(hairSystemName[0])
+		select(hairSystemName)
 		hairSystemName=pickWalk(d='up')
 		delete(hairSystemName)
 		#Delete Follicle Node
-		follicleNode=[]
-		follicleNode[0]=str(getAttr(chainCtrl + ".nameOfFollicleNode"))
-		select(follicleNode[0])
+		#follicleNode=[]
+		follicleNode = str(getAttr(chainCtrl + ".nameOfFollicleNode"))
+		select(follicleNode)
 		follicleNode=pickWalk(d='up')
 		delete(follicleNode)
 		#Delete Dynamic Hair Curve
 		delete(getAttr(chainCtrl + ".nameOfDynCurve"))
 		#Delete Tip Constraint
-		if (getAttr(chainCtrl + ".nameOfTipConstraint")) != "":
+		try:
 			delete(getAttr(chainCtrl + ".nameOfTipConstraint"))
-			#Delete Multi/Div Node
-			
-		if (getAttr(chainCtrl + ".nameOfMultiDivNode")) != "":
+		except pymel.core.general.MayaAttributeError, pymel.core.general.MayaNodeError:
+			pass
+		
+		#if (getAttr(chainCtrl + ".nameOfTipConstraint")) != "":
+			#delete(getAttr(chainCtrl + ".nameOfTipConstraint"))
+			##Delete Multi/Div Node
+		try:
 			delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
+		except Exception:
+			pass
+		#if (getAttr(chainCtrl + ".nameOfMultiDivNode")) != "":
+			#delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
 			#Delete IK Handle
 			
 		baseJoint=str(getAttr(chainCtrl + ".baseJoint"))
@@ -591,6 +644,43 @@ def deleteDynChain():
 		print "Dynamics have been deleted from the chain.\n"
 		
 	
+
+
+def disable_dynamics():
+	sel=mc.ls(selection=True)
+	try:
+		dyn_ctrl = sel[0]
+	except IndexError:
+		mel.warning("Please select the dyamic controller.")
+	# Get all the children of the dag node
+	dag_node = DagNode(pickWalk(d='up')[0])
+	dag_children = dag_node.getChildren()
+	ik_handle = ''
+	for child in dag_children:
+		if isinstance(child, IkHandle):
+			ik_handle = child	
+	try:	
+		ik_handle.disableHandles()
+	except AttributeError:
+		mel.warning("Cannot find IK handle attached to controller group")
+	
+def enable_dynamics():
+	sel=mc.ls(selection=True)
+	try:
+		dyn_ctrl = sel[0]
+	except IndexError:
+		mel.warning("Please select the dyamic controller.")
+	# Get all the children of the dag node
+	dag_node = DagNode(pickWalk(d='up')[0])
+	dag_children = dag_node.getChildren()
+	ik_handle = ''
+	for child in dag_children:
+		if isinstance(child, IkHandle):
+			ik_handle = child	
+	try:	
+		ik_handle.enableHandles()
+	except AttributeError:
+		mel.warning("Cannot find IK handle attached to controller group")
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
@@ -650,6 +740,10 @@ def main():
 	button(c=lambda *args: overlap_tool.collideWithChain(),label="Make Collide")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.deleteDynChain(),label="Delete Dynamics")
+	text("Disable Dynamics: ")
+	button(c=lambda *args: overlap_tool.disable_dynamics(), label="Disable Dynamics")
+	text("Enable Dynamics: ")
+	button(c=lambda *args: overlap_tool.enable_dynamics(), label="Enable Dynamics")
 	setParent('..')
 	#Bake Animation Layouts
 	separator(h=20,w=330)
@@ -660,7 +754,7 @@ def main():
 	text("Select Control:")
 	intField('startFrame')
 	intField('endFrame',value=400)
-	button(c=lambda *args: cgTkDynChain.bakeDynChain(),label="Bake Dynamics")
+	button(c=lambda *args: overlap_tool.bakeDynChain(),label="Bake Dynamics")
 	#Show Main Window Command
 	showWindow('dynChainWindow')
 	
