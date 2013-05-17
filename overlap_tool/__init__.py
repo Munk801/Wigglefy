@@ -703,7 +703,7 @@ def enable_dynamics():
 	try:
 		dyn_ctrl = sel[0]
 	except IndexError:
-		mel.warning("Please select the dyamic controller.")
+		mel.warning("Please select the dynamic controller.")
 	# Get all the children of the dag node
 	dag_node = DagNode(pickWalk(d='up')[0])
 	dag_children = dag_node.getChildren()
