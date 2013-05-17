@@ -28,6 +28,7 @@
 #----------------------------------------------------------------- IMPORTS --#
 
 # Built-in
+from itertools import izip
 import overlap_tool
 import maya.cmds as mc
 import maya.mel as mm
@@ -37,6 +38,15 @@ from pymel.all import *
 # External
 import ani_tools.rmaya.ani_library as ani_lib
 from maya_tools.ui.gui_tool_kit import *
+from pipe_utils import xml_utils
+
+# UI Stuff
+from PyQt4 import QtGui, QtCore
+from ui_lib.inputs.button import RButton
+from ui_lib.widgets.label import RLabel
+from ui_lib.window import RWindow
+from ui_lib.layouts.box_layout import RVBoxLayout, RHBoxLayout
+from ui_lib.layouts.form_layout import RFormLayout
 
 #---------------------------------------------------------------------------------#
 # Constants
@@ -114,7 +124,7 @@ def add_dynamic_attributes(jointCtrlObj):
 	addAttr(jointCtrlObj,
                 min=0,ln="gravity",max=10,keyable=True,at='double',dv=1)
 	addAttr(jointCtrlObj,
-                min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=0.5)
+                min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=5.0)
 	addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
 	setAttr((jointCtrlObj + ".turbulenceCtrl"),
                 lock=True)
@@ -242,13 +252,14 @@ def create_dynamic_chain():
 		#mel.makeCurvesDynamicHairs()
 		mm.eval('makeCurvesDynamicHairs false false true')
 		#Determine what the name of the dynamic curve is
+		#XXX Need a better way to get the curve name
 		nameOfDynCurve=nameOfCurve[5:len(nameOfCurve) + 1]
 		dynCurveInstance=str(int(nameOfDynCurve) + 1)
 		nameOfDynCurve="curve{0}".format(dynCurveInstance)
 		#Create Tip Constraint
 		nameOfHairConstraint=[]
 		if checkBoxGrp('tipConstraintCheckbox',q=1,value1=1):
-			select((nameOfDynCurve + ".cv[" + str(cvCounter) + "]"), r=True)
+			select((nameOfDynCurve + ".cv[" + str(counter) + "]"), r=True)
 			mel.createHairConstraint(0)
 			selection=pickWalk(d='up')
 			nameOfHairConstraint.append(selection[0])
@@ -294,7 +305,7 @@ def create_dynamic_chain():
 		        endJoint : 'endJoint',
 		}
 		if nameOfHairConstraint:
-			obj_names[nameOfHairConstraint] = 'nameOfTipConstraint'
+			obj_names[nameOfHairConstraint[0]] = 'nameOfTipConstraint'
 		add_name_to_attr(jointCtrlObj, obj_names)
 		
 		#Add special attribute to house baking state
@@ -350,6 +361,7 @@ def create_dynamic_chain():
 		nameOfIKHandle[0]=str(rename(nameOfIKHandle[0],
 			(baseJoint + "ikHandle")))
 		
+		# Attach IK blend to attribute on controller.
 		connectAttr((jointCtrlObj + ".blend"), 
 		            (nameOfIKHandle[0] + ".ikBlend"), f=True)
 	
@@ -412,7 +424,7 @@ def create_dynamic_chain():
 #///////////////////////////////////////////////////////////////////////////////////////
 #								Collisions Procedure
 #///////////////////////////////////////////////////////////////////////////////////////
-def collideWithChain():
+def collide_with_chain():
 	sel=mc.ls(selection=True)
 	controllers=[]
 	colliders=[]
@@ -421,7 +433,7 @@ def collideWithChain():
 	numberOfObjects=len(sel)
 	i=0
 	progressWindow(status="Preparing: 0%",
-		title="CGToolkit's Dyn Chain Collisions:",
+		title="RFX Dynamic Chain Collisions:",
 		maxValue=100,
 		minValue=0,
 		isInterruptable=True,
@@ -444,12 +456,11 @@ def collideWithChain():
 		pos=len(controllers)
 		#If obj is a controller
 		if mel.attributeExists("nameOfHairShapeNode", obj):
-			controllers[pos]=str(obj)
+			controllers.append(str(obj))
 			#Add to controller list
-			
 		
 		else:
-			shapeNode=listRelatives(path=obj,s=1)
+			shapeNode=listRelatives(obj, path = True, s = True)
 			#Get the shape node of obj
 			#Find current index in collider array
 			pos=len(colliders)
@@ -457,56 +468,81 @@ def collideWithChain():
 			if (objectType(shapeNode[0],
 				isType="mesh")) or (objectType(shapeNode[0],
 				isType="nurbsSurface")):
-				colliders[pos]=str(obj)
+				colliders.append(str(obj))
 				
 			
-		
 	progressWindow(edit=1,status="Connecting Colliders: 0%")
 	numberOfObjects=len(controllers)
 	i=0
 	#For every controller that was selected...
 	for chainCtrl in controllers:
 		i+=1
-		# Check if the dialog has been cancelled
-		if progressWindow(query=1,isCancelled=1):
-			break
-			# Check if end condition has been reached
+		## Check if the dialog has been cancelled
+		#if progressWindow(query=1,isCancelled=1):
+			#break
+			## Check if end condition has been reached
 			
-		if progressWindow(query=1,progress=1)>=100:
-			break
+		#if progressWindow(query=1,progress=1)>=100:
+			#break
 			
-		amount=((100 / numberOfObjects) * i)
-		progressWindow(edit=1,progress=amount)
+		#amount=((100 / numberOfObjects) * i)
+		#progressWindow(edit=1,progress=amount)
 		#Get the name of the hair shape node
 		hairShape=str(getAttr(str(chainCtrl) + ".nameOfHairShapeNode"))
 		#For every NURBS or polygon surface that was selected...
 		for collider in colliders:
+			select(chainCtrl)
 			nameofGeoConnector=str(createNode('geoConnector'))
+			setAttr((nameofGeoConnector + ".tessellationFactor"), 200)
 			#Create geoConnector node and store it's name into a variable
 			#Get the shape node of collider
-			objShape=listRelatives(path=collider,s=1)
+			objShape=listRelatives(collider, path = True, s= True)
+			cmd="connectAttr " + str(objShape[0]) + ".message " + nameofGeoConnector+ ".owner;"
+			evalEcho(cmd)
+			cmd="connectAttr " + str(objShape[0]) + ".worldMatrix[0] " + nameofGeoConnector+ ".worldMatrix;"
+			evalEcho(cmd)
+			cmd="connectAttr " + str(objShape[0]) + ".outMesh " + nameofGeoConnector+ ".localGeometry;"
+			evalEcho(cmd)
+			cmd="connectAttr -na " + nameofGeoConnector+ ".resilience " + str(hairShape) + ".collisionResilience;"
+			evalEcho(cmd)
+			cmd="connectAttr -na " + nameofGeoConnector+ ".friction " + str(hairShape) + ".collisionFriction;"
+			evalEcho(cmd)
+			cmd="connectAttr -na " + nameofGeoConnector+ ".sweptGeometry " + str(hairShape) + ".collisionGeometry;"
+			evalEcho(cmd)
+			cmd="connectAttr time1.outTime " + nameofGeoConnector+ ".currentTime"
+			evalEcho(cmd)			
 			#Connect all the necessary attributes to make the surface collide
-			connectAttr((objShape[0] + ".message"),(nameofGeoConnector + ".owner"))
-			connectAttr((objShape[0] + ".worldMatrix[0]"),(nameofGeoConnector + ".worldMatrix"))
-			connectAttr((objShape[0] + ".outMesh"),(nameofGeoConnector + ".localGeometry"))
-			connectAttr((hairShape + ".collisionResilience"),
-				na=(nameofGeoConnector + ".resilience"))
-			connectAttr((hairShape + ".collisionFriction"),
-				na=(nameofGeoConnector + ".friction"))
-			connectAttr((hairShape + ".collisionGeometry"),
-				na=(nameofGeoConnector + ".sweptGeometry"))
-			connectAttr('time1.outTime',(nameofGeoConnector + ".currentTime"))
+			#connectAttr((objShape[0] + ".message"),(nameofGeoConnector + ".owner"))
+			#connectAttr((objShape[0] + ".worldMatrix[0]"),(nameofGeoConnector + ".worldMatrix"))
+			#connectAttr((objShape[0] + ".outMesh"),(nameofGeoConnector + ".localGeometry"))
+			#connectAttr((hairShape + ".collisionResilience"),
+				#(nameofGeoConnector + ".resilience"), na=True, f=True)
+			#connectAttr((hairShape + ".collisionFriction"),
+				#(nameofGeoConnector + ".friction"), na=True, f=True)
+			#connectAttr((hairShape + ".collisionGeometry"),
+				#(nameofGeoConnector + ".sweptGeometry"), na=True, f=True)
+			#connectAttr('time1.outTime',(nameofGeoConnector + ".currentTime"))
+			#connectAttr((nameofGeoConnector + ".owner"), (objShape[0] + ".message"), f=True, na=True)
+			#connectAttr((nameofGeoConnector + ".worldMatrix"), (objShape[0] + ".worldMatrix[0]"), f=True, na=True)
+			#connectAttr((nameofGeoConnector + ".localGeometry"), (objShape[0] + ".outMesh"), f=True, na=True)
+			#connectAttr((nameofGeoConnector + ".resilience"), 
+			            #(hairShape + ".collisionResilience"), f=True,  na = True)
+			
+			#connectAttr((nameofGeoConnector + ".friction"), 
+			            #(hairShape + ".collisionFriction"), f=True, na = True)
+			#connectAttr((nameofGeoConnector + ".sweptGeometry"), 
+			            #(hairShape + ".collisionGeometry"), f = True, na = True)
+			#connectAttr((nameofGeoConnector + ".currentTime"), 'time1.outTime', f = True, na=True)
 			#Print output to the user for each connected collider.
 			print str(obj) + " has been set to collide with " + str(chainCtrl) + "\n"
 			
-		
-	progressWindow()
+	progressWindow(endProgress = True)
 	
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								BAKING PROCEDURE
 #///////////////////////////////////////////////////////////////////////////////////////
-def bakeDynChain():
+def bake_dynamic_chain():
 	initialSel=mc.ls(selection=True)
 	#Declare necessary variables
 	allCtrls=[]
@@ -577,7 +613,7 @@ def bakeDynChain():
 #///////////////////////////////////////////////////////////////////////////////////////
 #								DELETE DYNAMICS PROCEDURE
 #///////////////////////////////////////////////////////////////////////////////////////
-def deleteDynChain():
+def delete_dynamic_chain():
 	initialSel=mc.ls(selection=True)
 	#Declare necessary variables
 	chainCtrl=initialSel[0]
@@ -643,8 +679,6 @@ def deleteDynChain():
 		#Print feedback to the user.
 		print "Dynamics have been deleted from the chain.\n"
 		
-	
-
 
 def disable_dynamics():
 	sel=mc.ls(selection=True)
@@ -682,10 +716,49 @@ def enable_dynamics():
 	except AttributeError:
 		mel.warning("Cannot find IK handle attached to controller group")
 
+def create_character_from_prefs():
+	# XXX Doesn't do any error checking for names in xml file
+	# XXX Only does joints.  What about attrs?
+	item = fileDialog()
+	prefs = xml_utils.ElementTree.parse(str(item))
+	root = prefs.getroot()
+	for child in root:
+		if child.tag == 'joints':
+			for joint in child.getchildren():
+				base_joint = joint.attrib['base']
+				end_joint = joint.attrib['end']
+				select([base_joint, end_joint], replace=True)
+				create_dynamic_chain()
+	print "DUDE"
+	pass
+
+
+def save_character_to_prefs():
+	# XXX Currently expects selection to go "base, end, base, end, etc"
+	# XXX Overrides current xml file.  Maybe it doesn't need to do that
+	
+	item = fileDialog2()
+	all_joints = ls(selection=True)
+	root = xml_utils.ElementTree.Element('data')
+	joints = xml_utils.ElementTree.SubElement(root, 'joints')
+	for base, end in pairwise(all_joints):
+		joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
+		joint_info.set('base', base)
+		joint_info.set('end', end)
+	xml_utils.indent(root)
+	tree = xml_utils.ElementTree.ElementTree(root)
+	tree.write(str(item[0]))
+	pass
+
+def pairwise(iterable):
+	a = iter(iterable)
+	return izip(a, a)
+
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
 #///////////////////////////////////////////////////////////////////////////////////////
 def main():
+	#XXX TODO: Switch from using MELs gui system to ui_lib
 	if window('dynChainWindow',q=1,ex=1):
 		deleteUI('dynChainWindow')
 		#Main Window
@@ -694,7 +767,7 @@ def main():
 	scrollLayout(hst=0)
 	columnLayout('dynChainColumn')
 	#Dynamic Chain Creation Options Layout
-	frameLayout('creationOptions',h=130,
+	frameLayout('creationOptions',h=150,
 		borderStyle='etchedOut',
 		collapsable=True,
 		w=320,
@@ -737,9 +810,9 @@ def main():
 	text("Select base joint, shift select tip: ")
 	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
 	text("Select control, shift select collider(s): ")
-	button(c=lambda *args: overlap_tool.collideWithChain(),label="Make Collide")
+	button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
 	text("Select control: ")
-	button(c=lambda *args: overlap_tool.deleteDynChain(),label="Delete Dynamics")
+	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
 	text("Disable Dynamics: ")
 	button(c=lambda *args: overlap_tool.disable_dynamics(), label="Disable Dynamics")
 	text("Enable Dynamics: ")
@@ -754,10 +827,27 @@ def main():
 	text("Select Control:")
 	intField('startFrame')
 	intField('endFrame',value=400)
-	button(c=lambda *args: overlap_tool.bakeDynChain(),label="Bake Dynamics")
+	button(c=lambda *args: overlap_tool.bake_dynamic_chain(),label="Bake Dynamics")
+	
+	# XXX TODO Add section for opening prefs files.
+	setParent('..')
+	separator(h=20, w=330)
+	text("                               -Character Prefs-")
+	rowColumnLayout('prefsRowColumn',nc=2, cw=[(1, 175), (2, 150)])
+	text("Open Character Prefs: ")
+	button(c=lambda *args: overlap_tool.create_character_from_prefs(), label="Open Character Prefs")
+	text("Select all joints: ")
+	button(c=lambda *args: overlap_tool.save_character_to_prefs(), label="Save Character Prefs")
 	#Show Main Window Command
 	showWindow('dynChainWindow')
 	
+class OverlapTool(RWindow):
+	def __init__(self):
+		super(OverlapTool, self).__init__()
+		self.initUI()
+		
+	def initUI(self):
+		pass
 
 if __name__ == "__main__":
 	main()
