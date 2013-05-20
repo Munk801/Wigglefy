@@ -113,8 +113,8 @@ def add_dynamic_attributes(jointCtrlObj):
 	"""
 	addAttr(jointCtrlObj,
 	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=0.001)
-	addAttr(jointCtrlObj,
-                min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
+	#addAttr(jointCtrlObj,
+        #        min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
 	addAttr(jointCtrlObj,
                 min=0,ln='damping',max=100,keyable=True,at='double',dv=0)
 	addAttr(jointCtrlObj,
@@ -207,7 +207,19 @@ def add_name_to_attr(jointCtrlObj, obj_names):
 	for obj, name in obj_names.iteritems():
 		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
 		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
-		
+	
+def set_chain_attr_values(baseJoint):
+	# Set dynamic chain attributes according to creation options
+	sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
+	sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
+	sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
+	setAttr((baseJoint + "DynChainControl.stiffness"),
+                sliderStiffness)
+	setAttr((baseJoint + "DynChainControl.damping"),
+                sliderDamping)
+	setAttr((baseJoint + "DynChainControl.drag"),
+                sliderDrag)
+
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
@@ -328,7 +340,6 @@ def create_dynamic_chain():
 		#Connect attributes on the controller sphere to the follicle node
 		ctrl_to_follicle_attrs = {
 		        'stiffness' : 'stiffness',
-		        'lengthFlex' : 'lengthFlex',
 		        'damping' : 'damp'
 		}
 		connect_controller_to_system(jointCtrlObj, nameOfFollicle[0], ctrl_to_follicle_attrs)
@@ -382,17 +393,18 @@ def create_dynamic_chain():
 			parent(follicleGrpNode,parentOfBaseJoint)
 			# Parent the follicle into heirarchy
 			parent(nameOfDynCurve, w=True)
-			
-		sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
+		
+		set_chain_attr_values(baseJoint)	
 		# Set dynamic chain attributes according to creation options
-		sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
-		sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
-		setAttr((baseJoint + "DynChainControl.stiffness"),
-			sliderStiffness)
-		setAttr((baseJoint + "DynChainControl.damping"),
-			sliderDamping)
-		setAttr((baseJoint + "DynChainControl.drag"),
-			sliderDrag)
+		#sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
+		#sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
+		#sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
+		#setAttr((baseJoint + "DynChainControl.stiffness"),
+			#sliderStiffness)
+		#setAttr((baseJoint + "DynChainControl.damping"),
+			#sliderDamping)
+		#setAttr((baseJoint + "DynChainControl.drag"),
+			#sliderDrag)
 		# Group the dynamic chain nodes
 		nameOfGroup=str(group(jointCtrlObj,nameOfDynCurve,nameOfIKHandle[0],nameOfHairSystem,
 			name=(baseJoint + "DynChainGroup")))
@@ -639,16 +651,12 @@ def delete_dynamic_chain():
 			
 		
 	if error == 0:
-		#hairSystemName=[]
 		#Delete Hair System Node
-		#hairSystemName[0]=str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
 		hairSystemName = str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
-		##select(hairSystemName[0])
 		select(hairSystemName)
 		hairSystemName=pickWalk(d='up')
 		delete(hairSystemName)
 		#Delete Follicle Node
-		#follicleNode=[]
 		follicleNode = str(getAttr(chainCtrl + ".nameOfFollicleNode"))
 		select(follicleNode)
 		follicleNode=pickWalk(d='up')
@@ -660,22 +668,18 @@ def delete_dynamic_chain():
 			delete(getAttr(chainCtrl + ".nameOfTipConstraint"))
 		except pymel.core.general.MayaAttributeError, pymel.core.general.MayaNodeError:
 			pass
-		
-		#if (getAttr(chainCtrl + ".nameOfTipConstraint")) != "":
-			#delete(getAttr(chainCtrl + ".nameOfTipConstraint"))
-			##Delete Multi/Div Node
 		try:
 			delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
 		except Exception:
 			pass
-		#if (getAttr(chainCtrl + ".nameOfMultiDivNode")) != "":
-			#delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
-			#Delete IK Handle
-			
+		
 		baseJoint=str(getAttr(chainCtrl + ".baseJoint"))
 		delete(baseJoint + "ikHandle")
 		#Delete control object
-		delete(chainCtrl)
+		select(chainCtrl)
+		group = pickWalk(d='up')
+		delete(group)
+		
 		#Print feedback to the user.
 		print "Dynamics have been deleted from the chain.\n"
 		
@@ -729,26 +733,35 @@ def create_character_from_prefs():
 				end_joint = joint.attrib['end']
 				select([base_joint, end_joint], replace=True)
 				create_dynamic_chain()
-	print "DUDE"
-	pass
-
 
 def save_character_to_prefs():
 	# XXX Currently expects selection to go "base, end, base, end, etc"
 	# XXX Overrides current xml file.  Maybe it doesn't need to do that
 	
 	item = fileDialog2()
-	all_joints = ls(selection=True)
+	all_ctrls = ls(selection=True)
 	root = xml_utils.ElementTree.Element('data')
 	joints = xml_utils.ElementTree.SubElement(root, 'joints')
-	for base, end in pairwise(all_joints):
+	for ctrl in all_ctrls:
+		base_joint = getAttr('{0}.baseJoint'.format(ctrl))
+		end_joint = getAttr('{0}.endJoint'.format(ctrl))
 		joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
-		joint_info.set('base', base)
-		joint_info.set('end', end)
+		joint_info.set('base', base_joint)
+		joint_info.set('end', end_joint)
 	xml_utils.indent(root)
 	tree = xml_utils.ElementTree.ElementTree(root)
 	tree.write(str(item[0]))
-	pass
+	#item = fileDialog2()
+	#all_joints = ls(selection=True)
+	#root = xml_utils.ElementTree.Element('data')
+	#joints = xml_utils.ElementTree.SubElement(root, 'joints')
+	#for base, end in pairwise(all_joints):
+		#joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
+		#joint_info.set('base', base)
+		#joint_info.set('end', end)
+	#xml_utils.indent(root)
+	#tree = xml_utils.ElementTree.ElementTree(root)
+	#tree.write(str(item[0]))
 
 def pairwise(iterable):
 	a = iter(iterable)
@@ -809,7 +822,7 @@ def main():
 	rowColumnLayout(nc=2,cw=[(1, 175), (2, 150)])
 	text("Select base joint, shift select tip: ")
 	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
-	text("Select control, shift select collider(s): ")
+	text("Select all ctrls and colliders: ")
 	button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
@@ -836,7 +849,7 @@ def main():
 	rowColumnLayout('prefsRowColumn',nc=2, cw=[(1, 175), (2, 150)])
 	text("Open Character Prefs: ")
 	button(c=lambda *args: overlap_tool.create_character_from_prefs(), label="Open Character Prefs")
-	text("Select all joints: ")
+	text("Select joints by base->end")
 	button(c=lambda *args: overlap_tool.save_character_to_prefs(), label="Save Character Prefs")
 	#Show Main Window Command
 	showWindow('dynChainWindow')
