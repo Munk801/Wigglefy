@@ -49,8 +49,18 @@ from ui_lib.layouts.box_layout import RVBoxLayout, RHBoxLayout
 from ui_lib.layouts.form_layout import RFormLayout
 
 #---------------------------------------------------------------------------------#
-# Constants
+# Globals
 #---------------------------------------------------------------------------------#
+DYN_STIFFNESS = 0.05
+DYN_DAMPING = 0.5
+DYN_DRAG = 0
+DYN_FRICTION = 0.5
+DYN_GRAVITY = 2
+DYN_STRENGTH = 0
+DYN_FREQUENCY = 0.2
+DYN_SPEED = 0.2
+DYN_BLEND = 1
+DYN_CONTROLLER_SIZE = 5
 
 #---------------------------------------------------------------------------------#
 # Helper Functions 
@@ -228,15 +238,21 @@ def create_dynamic_chain():
 	sel = ls(selection=True)
 	base_ctrl = sel[0]
 	end_ctrl = sel[1]
-	base_children = base_ctrl.getChildren()
-	end_children = end_ctrl.getChildren()
-	baseJoint = [node for node in base_children if isinstance(node, Joint)][0]
-	endJoint = [node for node in end_children if isinstance(node, Joint)][0]
+
+	# Check if joints or controllers are selected
+	if not isinstance(base_ctrl, Joint):
+		base_children = base_ctrl.getChildren()
+		baseJoint = [node for node in base_children if isinstance(node, Joint)][0]
+	else:
+		baseJoint = base_ctrl
+
+	if not isinstance(end_ctrl, Joint):	
+		end_children = end_ctrl.getChildren()
+		endJoint = [node for node in end_children if isinstance(node, Joint)][0]
+	else:
+		endJoint = end_ctrl
+
 	sel=mc.ls(selection=True)
-	#Store the current selection into an string array.
-	#Store the name of the base and end joints into strings.
-	#baseJoint=sel[0]
-	#endJoint=sel[1]
 	#Create a vector array to store the world space coordinates of the joints.
 	jointPos=[]
 	#String variable to house current joint being queried in the while loop.
@@ -353,6 +369,8 @@ def create_dynamic_chain():
 		        nameOfUtilityNode : 'nameOfMultiDivNode',
 		        baseJoint : 'baseJoint',
 		        endJoint : 'endJoint',
+			joint_names[0] : 'linkedBaseJoint',
+			joint_names[-1] : 'linkedEndJoint',
 		}
 		if nameOfHairConstraint:
 			obj_names[nameOfHairConstraint[0]] = 'nameOfTipConstraint'
@@ -776,6 +794,15 @@ def create_character_from_prefs():
 				end_joint = joint.attrib['end']
 				select([base_joint, end_joint], replace=True)
 				create_dynamic_chain()
+	for child in root:
+		if child.tag =='attrs':
+			for attr in child.getchildren():
+				for setting, value in attr.attrib.iteritems():
+					if setting == 'name':
+						continue
+					setAttr('{0}.{1}'.format(attr.attrib['name'], setting), float(value))
+
+
 
 def save_character_to_prefs():
 	# XXX Currently expects selection to go "base, end, base, end, etc"
@@ -785,12 +812,33 @@ def save_character_to_prefs():
 	all_ctrls = ls(selection=True)
 	root = xml_utils.ElementTree.Element('data')
 	joints = xml_utils.ElementTree.SubElement(root, 'joints')
+	attrs = xml_utils.ElementTree.SubElement(root, 'attrs')
+	# Save the joints
 	for ctrl in all_ctrls:
-		base_joint = getAttr('{0}.baseJoint'.format(ctrl))
-		end_joint = getAttr('{0}.endJoint'.format(ctrl))
+		base_joint = getAttr('{0}.linkedBaseJoint'.format(ctrl))
+		end_joint = getAttr('{0}.linkedEndJoint'.format(ctrl))
 		joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
 		joint_info.set('base', base_joint)
 		joint_info.set('end', end_joint)
+		joint_info.set('name', ctrl)
+		
+		# Save the attrs
+		attr_info = xml_utils.ElementTree.SubElement(attrs, 'attr')
+		attr_dict = {
+			'stiffness' : getAttr('{0}.stiffness'.format(ctrl)),
+			'damping' : getAttr('{0}.damping'.format(ctrl)),
+			'drag' : getAttr('{0}.drag'.format(ctrl)),
+			'friction' : getAttr('{0}.friction'.format(ctrl)),
+			'gravity' : getAttr('{0}.gravity'.format(ctrl)),
+			'controllerSize' : getAttr('{0}.controllerSize'.format(ctrl)),
+			'strength' : getAttr('{0}.strength'.format(ctrl)),
+			'frequency' : getAttr('{0}.frequency'.format(ctrl)),
+			'speed' : getAttr('{0}.speed'.format(ctrl)),
+			'blend' : getAttr('{0}.blend'.format(ctrl))
+		}
+		attr_info.set('name', ctrl)
+		for attr_name, attr_val in attr_dict.iteritems():
+			attr_info.set(attr_name, str(attr_val))
 	xml_utils.indent(root)
 	tree = xml_utils.ElementTree.ElementTree(root)
 	tree.write(str(item[0]))
