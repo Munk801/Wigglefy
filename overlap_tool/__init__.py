@@ -243,6 +243,7 @@ def create_dynamic_chain():
 	currentJoint=baseJoint
 	#Counter integer used in the while loop to determine the proper index in the vector array.
 	counter=0
+	
 	#Check to ensure proper selection
 	if not ((objectType(baseJoint, isType="joint")) and 
 	        (objectType(endJoint, isType="joint"))):
@@ -252,7 +253,9 @@ def create_dynamic_chain():
 		#Initial selection going into the while loop/
 		#Will loop through all the joints between the base and end by pickwalking through them.
 		#The loop stores the world space of each joint into $jointPos as it iterates over them.
+		joint_names = []
 		while currentJoint != endJoint:
+			joint_names.append(currentJoint)
 			#jointPos[counter]=joint(currentJoint,q=1,p=1,a=1)
 			jointPos.append(joint(currentJoint, q=1, p=1, a=1))
 			pickWalk(d='down')
@@ -281,7 +284,16 @@ def create_dynamic_chain():
 		sel=mc.ls(selection=True)
 		#Theses 3 lines store the position of the end joint that the loop will miss.
 		currentJoint=sel[0]
+		joint_names.append(currentJoint)
 		jointPos.append(joint(currentJoint, q=1,p=1,a=1))
+		# Create the list of joints to be parent constrained to the FK joints
+		joint_list = []
+		select(deselect=True)
+		for i, pos in enumerate(jointPos):
+			joint_list.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}_DYN'.format(joint_names[i])))
+		#reset base joint and end joint
+		baseJoint = joint_list[0]
+		endJoint = joint_list[-1]
 		#Now that $jointPos[] holds the world space coords of our joints, we need to build a cv curve
 		#with points at each XYZ coord.
 		nameOfCurve = build_curve_from_joint(jointPos, counter)	
@@ -393,7 +405,8 @@ def create_dynamic_chain():
 		lock_and_hide_attr(jointCtrlObj)
 		
 		#Build the splineIK handle using the dynamic curve.
-		select(baseJoint,endJoint,nameOfDynCurve)
+		#select(baseJoint,endJoint,nameOfDynCurve)
+		select(joint_list[0], joint_list[-1], nameOfDynCurve)
 		nameOfIKHandle=ikHandle(ccv=False,sol='ikSplineSolver')
 		nameOfIKHandle[0]=str(rename(nameOfIKHandle[0],
 			(baseJoint + "ikHandle")))
@@ -455,6 +468,10 @@ def create_dynamic_chain():
 		select(baseJoint + "DynChainControl")
 		
 		addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
+		# Constrain the dynamic chain to the joint
+		for i, cur_joint in enumerate(joint_list):
+			scaleConstraint(cur_joint, joint_names[i])
+			parentConstraint(cur_joint, joint_names[i], mo=True)
 		# Print feedback for user
 		print "Dynamic joint chain successfully setup!\n"
 		
