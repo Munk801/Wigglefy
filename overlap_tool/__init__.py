@@ -224,11 +224,19 @@ def set_chain_attr_values(baseJoint):
 # Main Functions
 #---------------------------------------------------------------------------------#
 def create_dynamic_chain():
+	# Get the selection of controls
+	sel = ls(selection=True)
+	base_ctrl = sel[0]
+	end_ctrl = sel[1]
+	base_children = base_ctrl.getChildren()
+	end_children = end_ctrl.getChildren()
+	baseJoint = [node for node in base_children if isinstance(node, Joint)][0]
+	endJoint = [node for node in end_children if isinstance(node, Joint)][0]
 	sel=mc.ls(selection=True)
 	#Store the current selection into an string array.
 	#Store the name of the base and end joints into strings.
-	baseJoint=sel[0]
-	endJoint=sel[1]
+	#baseJoint=sel[0]
+	#endJoint=sel[1]
 	#Create a vector array to store the world space coordinates of the joints.
 	jointPos=[]
 	#String variable to house current joint being queried in the while loop.
@@ -248,8 +256,26 @@ def create_dynamic_chain():
 			#jointPos[counter]=joint(currentJoint,q=1,p=1,a=1)
 			jointPos.append(joint(currentJoint, q=1, p=1, a=1))
 			pickWalk(d='down')
-			sel=mc.ls(selection=True)
-			currentJoint=sel[0]
+			sel = ls(selection=True)
+			child = sel[0]
+			while not isinstance(child, Joint):
+				prev_sel = child
+				pickWalk(d='down')
+				sel = ls(selection=True)
+				# Something doesn't move smoothly down the chain
+				if prev_sel == sel[0]:
+					children = sel[0].getChildren()
+					if not children:
+						# We went too far, go back to get the children
+						pickWalk(d='up')
+						sel = ls(selection=True)
+						children = sel[0].getChildren()
+					child = [item for item in children if isinstance(item, Joint)][0]
+				else:
+					child = sel[0]
+					
+			currentJoint=child
+			select(currentJoint)
 			counter+=1
 		
 		sel=mc.ls(selection=True)
