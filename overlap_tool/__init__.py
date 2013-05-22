@@ -234,13 +234,20 @@ def set_chain_attr_values(baseJoint):
 # Main Functions
 #---------------------------------------------------------------------------------#
 def create_dynamic_chain():
+	# List of controls
+	controls = []	
+	
 	# Get the selection of controls
 	sel = ls(selection=True)
+	
+	# There may only be a two joint set or controllers set
+	# XXX user should be able to select one controller with 2 joints attached
 	base_ctrl = sel[0]
 	end_ctrl = sel[1]
 
 	# Check if joints or controllers are selected
 	if not isinstance(base_ctrl, Joint):
+		controls.append(base_ctrl)
 		base_children = base_ctrl.getChildren()
 		baseJoint = [node for node in base_children if isinstance(node, Joint)][0]
 	else:
@@ -304,9 +311,15 @@ def create_dynamic_chain():
 		jointPos.append(joint(currentJoint, q=1,p=1,a=1))
 		# Create the list of joints to be parent constrained to the FK joints
 		joint_list = []
+		blend_joints = []
 		select(deselect=True)
 		for i, pos in enumerate(jointPos):
 			joint_list.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}_DYN'.format(joint_names[i])))
+
+		# Create the blend joints
+		select(deselect=True)
+		for i, pos in enumerate(jointPos):
+			blend_joints.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}_BLND'.format(joint_names[i])))
 		#reset base joint and end joint
 		baseJoint = joint_list[0]
 		endJoint = joint_list[-1]
@@ -430,8 +443,8 @@ def create_dynamic_chain():
 			(baseJoint + "ikHandle")))
 		
 		# Attach IK blend to attribute on controller.
-		connectAttr((jointCtrlObj + ".blend"), 
-		            (nameOfIKHandle[0] + ".ikBlend"), f=True)
+		#connectAttr((jointCtrlObj + ".blend"), 
+		            #(nameOfIKHandle[0] + ".ikBlend"), f=True)
 	
 		#Rename Ctrl Obj
 		jointCtrlObj=str(rename(jointCtrlObj,
@@ -487,9 +500,41 @@ def create_dynamic_chain():
 		
 		addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 		# Constrain the dynamic chain to the joint
+		constraint_weights = []
 		for i, cur_joint in enumerate(joint_list):
+			#pass
+			scaleConstraint(cur_joint, joint_names[i])
+			constraint_weights.append(
+			        parentConstraint(cur_joint, joint_names[i], tl=True, mo=True, wal=True)
+			)
+		addAttr(jointCtrlObj, min=0,ln='dynamicWeight',max=1,keyable=True,at='double',dv=1)		
+		#for p_constraint in constraint_weights:
+			#name_base = "_".join(p_constraint.split('_')[:-1])
+			#attr_name = "{0}_DYNW0".format(name_base)
+			#connectAttr(
+			        #'{0}.dynamicWeight'.format(jointCtrlObj),
+			        #'{0}.{1}'.format(str(p_constraint), attr_name)
+			#)
+		
+		# Create constraints from original joints to the duplicate blend joints	
+		for i, cur_joint in enumerate(blend_joints):
+			#TEST constrain blend joints to original
 			scaleConstraint(cur_joint, joint_names[i])
 			parentConstraint(cur_joint, joint_names[i], mo=True)
+			
+		# For each constraint that was created, link that to a reverse
+		reverse_nodes = []
+		for p_constraint in constraint_weights:
+			reverse_node = createNode('reverse')
+			reverse_nodes.append(reverse_node)
+			name_base = "_".join(p_constraint.split('_')[:-1])
+			in_attr = "{0}.{1}_DYNW0".format(str(p_constraint), name_base)
+			out_attr = "{0}.{1}_BLNDW1".format(str(p_constraint), name_base)
+			connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
+			connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
+			connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)
+			
+		# Link all the reverse attributes to one attribute on the controller
 		# Print feedback for user
 		print "Dynamic joint chain successfully setup!\n"
 		
@@ -842,17 +887,6 @@ def save_character_to_prefs():
 	xml_utils.indent(root)
 	tree = xml_utils.ElementTree.ElementTree(root)
 	tree.write(str(item[0]))
-	#item = fileDialog2()
-	#all_joints = ls(selection=True)
-	#root = xml_utils.ElementTree.Element('data')
-	#joints = xml_utils.ElementTree.SubElement(root, 'joints')
-	#for base, end in pairwise(all_joints):
-		#joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
-		#joint_info.set('base', base)
-		#joint_info.set('end', end)
-	#xml_utils.indent(root)
-	#tree = xml_utils.ElementTree.ElementTree(root)
-	#tree.write(str(item[0]))
 
 def pairwise(iterable):
 	a = iter(iterable)
