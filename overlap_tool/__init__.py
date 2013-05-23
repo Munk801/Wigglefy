@@ -562,7 +562,7 @@ def replace_joint_nodes(base_node, all_nodes, blend_joints):
 						parent(joint, base_node)
 						setAttr('{0}.visibility'.format(joint), False)
 						break
-			all_nodes = get_all_nodes(child, all_nodes, blend_joints)
+			all_nodes = replace_joint_nodes(child, all_nodes, blend_joints)
 	return all_nodes
 
 #///////////////////////////////////////////////////////////////////////////////////////
