@@ -62,6 +62,9 @@ DYN_SPEED = 0.2
 DYN_BLEND = 1
 DYN_CONTROLLER_SIZE = 5
 
+DYN_SUFFIX = '_DYN'
+BLND_SUFFIX = '_BLND'
+
 #---------------------------------------------------------------------------------#
 # Helper Functions 
 #---------------------------------------------------------------------------------#
@@ -285,6 +288,8 @@ def create_dynamic_chain():
 			sel = ls(selection=True)
 			child = sel[0]
 			while not isinstance(child, Joint):
+				if isinstance(child, Transform) and 'CON' in str(child):
+					controls.append(child)
 				prev_sel = child
 				pickWalk(d='down')
 				sel = ls(selection=True)
@@ -314,12 +319,12 @@ def create_dynamic_chain():
 		blend_joints = []
 		select(deselect=True)
 		for i, pos in enumerate(jointPos):
-			joint_list.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}_DYN'.format(joint_names[i])))
+			joint_list.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}{1}'.format(joint_names[i], DYN_SUFFIX)))
 
 		# Create the blend joints
 		select(deselect=True)
 		for i, pos in enumerate(jointPos):
-			blend_joints.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}_BLND'.format(joint_names[i])))
+			blend_joints.append(joint(p=(pos[0], pos[1], pos[2]), name='{0}{1}'.format(joint_names[i], BLND_SUFFIX)))
 		#reset base joint and end joint
 		baseJoint = joint_list[0]
 		endJoint = joint_list[-1]
@@ -521,6 +526,7 @@ def create_dynamic_chain():
 			#TEST constrain blend joints to original
 			scaleConstraint(cur_joint, joint_names[i])
 			parentConstraint(cur_joint, joint_names[i], mo=True)
+			#parentConstraint(controls[i], cur_joint)
 			
 		# For each constraint that was created, link that to a reverse
 		reverse_nodes = []
@@ -528,16 +534,36 @@ def create_dynamic_chain():
 			reverse_node = createNode('reverse')
 			reverse_nodes.append(reverse_node)
 			name_base = "_".join(p_constraint.split('_')[:-1])
-			in_attr = "{0}.{1}_DYNW0".format(str(p_constraint), name_base)
-			out_attr = "{0}.{1}_BLNDW1".format(str(p_constraint), name_base)
+			in_attr = "{0}.{1}{2}W0".format(str(p_constraint), name_base, DYN_SUFFIX)
+			out_attr = "{0}.{1}{2}W1".format(str(p_constraint), name_base, BLND_SUFFIX)
 			connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
 			connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
 			connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)
-			
-		# Link all the reverse attributes to one attribute on the controller
+		
+		# Duplicate controls and attach to blend joints
+		all_nodes = []
+		new_control = duplicate(controls[0])[0]
+		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
 		# Print feedback for user
 		print "Dynamic joint chain successfully setup!\n"
 		
+def replace_joint_nodes(base_node, all_nodes, blend_joints):
+	all_nodes.append(base_node)
+	children = base_node.getChildren()
+	nodes_to_delete = []
+	if not children:
+		return all_nodes
+	else:
+		for child in children:
+			if isinstance(child, Joint):
+				for joint in blend_joints:
+					if str(child) in str(joint):
+						nodes_to_delete.append(child)
+						parent(joint, base_node)
+						setAttr('{0}.visibility'.format(joint), False)
+						break
+			all_nodes = get_all_nodes(child, all_nodes, blend_joints)
+	return all_nodes
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								Collisions Procedure
