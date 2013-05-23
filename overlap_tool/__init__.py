@@ -69,6 +69,75 @@ BLND_SUFFIX = '_BLND'
 # Helper Functions 
 #---------------------------------------------------------------------------------#
 
+def add_dynamic_attributes(jointCtrlObj):
+	""" Add all the attributes to the controller.
+	Args:
+		jointCtrlObj - (str)
+			Name of the controller object.
+	"""
+	addAttr(jointCtrlObj,
+	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=DYN_STIFFNESS)
+	#addAttr(jointCtrlObj,
+        #        min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
+	addAttr(jointCtrlObj,
+                min=0,ln='damping',max=100,keyable=True,at='double',dv=DYN_DAMPING)
+	addAttr(jointCtrlObj,
+                min=0,ln="drag",max=1,keyable=True,at='double',dv=DYN_DRAG)
+	addAttr(jointCtrlObj,
+                min=0,ln='friction',max=1,keyable=True,at='double',dv=DYN_FRICTION)
+	addAttr(jointCtrlObj,
+                min=0,ln="gravity",max=10,keyable=True,at='double',dv=DYN_GRAVITY)
+	addAttr(jointCtrlObj,
+                min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
+	addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
+	setAttr((jointCtrlObj + ".turbulenceCtrl"),
+                lock=True)
+	addAttr(jointCtrlObj,
+                min=0,ln="strength",max=1,keyable=True,at='double',dv=DYN_STRENGTH)
+	addAttr(jointCtrlObj,
+                min=0,ln="frequency",max=2,keyable=True,at='double',dv=DYN_FREQUENCY)
+	addAttr(jointCtrlObj,
+                min=0,ln="speed",max=2,keyable=True,at='double',dv=DYN_SPEED)
+	addAttr(jointCtrlObj,
+	        min=0, ln="blend",max=1,keyable=True,at='double',dv=DYN_BLEND)
+
+def add_name_to_attr(jointCtrlObj, obj_names):
+	""" Add specified names to the attributes.
+	Args:
+		jointCtrlObj - (str)
+	        	Name of the controller object
+	        obj_names - (dict)
+	        	Dict with obj as keys and names as values
+	"""
+	for obj, name in obj_names.iteritems():
+		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
+		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
+
+def build_curve_from_joint(jointPos):
+	""" Build the curve from the joint positions.
+	Args:
+		jointPos - (list)
+	        	List of joint positions containing [x,y,z]
+	        counter - (int)
+	        	Number of joint positions
+
+	"""
+	counter = len(jointPos)
+	#This string will house the command to create our curve.
+	buildCurve="curve -d 1 "
+	#Another counter integer for the for loop
+	cvCounter=0
+	#Loops over and adds the position of each joint to the buildCurve string.
+	for i in range(cvCounter, counter):
+		buildCurve = "{curve} -p {jpos}".format(
+	                curve = buildCurve,
+	                jpos = " ".join([str(pos) for pos in jointPos[i]])
+	        )
+	buildCurve = buildCurve + ";"
+	#Adds the end terminator to the build curve command
+	#Evaluates the $buildCurve string as a Maya command. (creates the curve running through the joints)
+	return str(mel.eval(buildCurve))
+
 def change_visibility(items, visibility):
 	""" Change the visiblity of all the items.
 	Args:
@@ -80,6 +149,180 @@ def change_visibility(items, visibility):
 	"""
 	[setAttr("{0}.visibility".format(item), visibility) for item in items]
 
+def connect_controller_to_system(ctrl, system, attrs):
+	""" Connect the system attributes to the controllers.
+	Args:
+		ctrl - (str)
+			Name of the controller
+		system - (str)
+			Name of the system to connect
+		attrs - (dict)
+			attributes to connect.  The key represents
+			the controllers attr and the value represents
+			the systems attr.
+
+	"""
+	for c_attr, s_attr in attrs.iteritems():
+		connectAttr(
+		        '{ctrl}.{attr}'.format(ctrl=ctrl, attr=c_attr), 
+		        '{system}.{attr}'.format(system=system, attr=s_attr), 
+		        f=True
+		)
+
+def constrain_joints(joint_names, joint_list, blend_joints):
+	constraint_weights = []
+	for i, cur_joint in enumerate(joint_list):
+		try:
+			scaleConstraint(cur_joint, joint_names[i])
+			constraint_weights.append(
+		                parentConstraint(
+		                        cur_joint, 
+		                        joint_names[i], 
+		                        tl=True, 
+		                        mo=True, 
+		                        wal=True
+		                )
+		        )
+		except RuntimeError as e:
+			warning("Dynamic joints could not constrain to original joints.\n" + e)
+
+	# Create constraints from original joints to the duplicate blend joints	
+	for i, cur_joint in enumerate(blend_joints):
+		#TEST constrain blend joints to original
+		try:
+			scaleConstraint(cur_joint, joint_names[i])
+			parentConstraint(cur_joint, joint_names[i], mo=True)
+		except RuntimeError as e:
+			warning("Blended joints could not constrain to original joints.\n" + e)
+	return constraint_weights
+
+def create_joints(joint_names, jointPos, joint_list, blend_joints):
+	""" Create both the dynamic joint chain and the blend joint chain.  The dynamic joint chain
+	will attach to the hair system while the blend joint chain will control the keyed animation.
+	
+	Args:
+		joint_names : (list)
+			list of all the joint names
+	        jointPos : (list)
+			list of x,y,z coordinates of the joints
+	        joint_list : (list)
+			list to append all the dynamic joints
+	        blend_joints : (list)
+			list to append all the blend joints
+	                
+	"""                
+	select(deselect=True)
+	for i, pos in enumerate(jointPos):
+		joint_list.append(
+	                joint(
+	                        p=(pos[0], pos[1], pos[2]), 
+	                        name='{0}{1}'.format(joint_names[i], DYN_SUFFIX)
+	                )
+	        )
+
+	# Create the blend joints
+	select(deselect=True)
+	for i, pos in enumerate(jointPos):
+		blend_joints.append(
+	                joint(
+	                        p=(pos[0], pos[1], pos[2]), 
+	                        name='{0}{1}'.format(joint_names[i], BLND_SUFFIX)
+	                )
+	        )
+		
+def get_joint_info(currentJoint, endJoint):
+	joint_names = []
+	jointPos = []
+	controls = []
+	while currentJoint != endJoint:
+		joint_names.append(currentJoint)
+		jointPos.append(joint(currentJoint, q=1, p=1, a=1))
+		pickWalk(d='down')
+		sel = ls(selection=True)
+		child = sel[0]
+		while not isinstance(child, Joint):
+			if isinstance(child, Transform) and 'CON' in str(child):
+				controls.append(child)
+			prev_sel = child
+			pickWalk(d='down')
+			sel = ls(selection=True)
+			# Something doesn't move smoothly down the chain
+			if prev_sel == sel[0]:
+				children = sel[0].getChildren()
+				if not children:
+					# We went too far, go back to get the children
+					pickWalk(d='up')
+					sel = ls(selection=True)
+					children = sel[0].getChildren()
+				child = [item for item in children if isinstance(item, Joint)][0]
+			else:
+				child = sel[0]
+				
+		currentJoint=child
+		select(currentJoint)
+		sel=mc.ls(selection=True)
+	#Theses 3 lines store the position of the end joint that the loop will miss.
+	currentJoint=sel[0]
+	joint_names.append(currentJoint)
+	jointPos.append(joint(currentJoint, q=1,p=1,a=1))
+	return joint_names, jointPos, controls
+
+def lock_and_hide_attr(jointCtrlObj):
+	""" Lock the attribute and hide it from the menu.
+	Args:
+		jointCtrlObj - (str)
+			Name of the controller object
+	"""
+	attrs = ['tx', 'ty', 'tz',
+	         'rx', 'ry', 'rz',
+	         'sx', 'sy', 'sz',]
+	for attr in attrs:
+		setAttr('{obj}.{attr}'.format(obj = jointCtrlObj, attr = attr), 
+	        	lock=True, 
+	                keyable=False
+		)
+
+def replace_joint_nodes(base_node, all_nodes, blend_joints):
+	""" This function will match new controls to the blended joints and delete the old 
+	duplicated joints. Take a parent base node, traverse through its entire tree, and replace
+	all of its joints with relative blended joints.  Also, hides the blended joints visibility.
+
+	"""
+	all_nodes.append(base_node)
+	children = base_node.getChildren()
+	nodes_to_delete = []
+	if not children:
+		return all_nodes
+	else:
+		for child in children:
+			if isinstance(child, Joint):
+				for joint in blend_joints:
+					if str(child) in str(joint):
+						nodes_to_delete.append(child)
+						parent(joint, base_node)
+						setAttr('{0}.visibility'.format(joint), False)
+						break
+			all_nodes = replace_joint_nodes(child, all_nodes, blend_joints)
+	return all_nodes
+
+def set_chain_attr_values(baseJoint):
+	""" Set the dynamics chain attrs from GUI values.
+	Args:
+		baseJoint - (str)
+			Name of the base joint which the control is applied to
+	                
+	"""
+	# Set dynamic chain attributes according to creation options
+	sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
+	sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
+	sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
+	setAttr((baseJoint + "DynChainControl.stiffness"),
+                sliderStiffness)
+	setAttr((baseJoint + "DynChainControl.damping"),
+                sliderDamping)
+	setAttr((baseJoint + "DynChainControl.drag"),
+                sliderDrag)
+	
 def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
 	curveInfoNode=str(arclen(nameOfDynCurve, ch=1))
 	#Create curve info node
@@ -118,164 +361,6 @@ def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
 		sel=mc.ls(selection=True)
 		currentJoint=sel[0]
 
-def add_dynamic_attributes(jointCtrlObj):
-	""" Add all the attributes to the controller.
-	Args:
-		jointCtrlObj - (str)
-			Name of the controller object.
-	"""
-	addAttr(jointCtrlObj,
-	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=DYN_STIFFNESS)
-	#addAttr(jointCtrlObj,
-        #        min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
-	addAttr(jointCtrlObj,
-                min=0,ln='damping',max=100,keyable=True,at='double',dv=DYN_DAMPING)
-	addAttr(jointCtrlObj,
-                min=0,ln="drag",max=1,keyable=True,at='double',dv=DYN_DRAG)
-	addAttr(jointCtrlObj,
-                min=0,ln='friction',max=1,keyable=True,at='double',dv=DYN_FRICTION)
-	addAttr(jointCtrlObj,
-                min=0,ln="gravity",max=10,keyable=True,at='double',dv=DYN_GRAVITY)
-	addAttr(jointCtrlObj,
-                min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
-	addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
-	setAttr((jointCtrlObj + ".turbulenceCtrl"),
-                lock=True)
-	addAttr(jointCtrlObj,
-                min=0,ln="strength",max=1,keyable=True,at='double',dv=DYN_STRENGTH)
-	addAttr(jointCtrlObj,
-                min=0,ln="frequency",max=2,keyable=True,at='double',dv=DYN_FREQUENCY)
-	addAttr(jointCtrlObj,
-                min=0,ln="speed",max=2,keyable=True,at='double',dv=DYN_SPEED)
-	addAttr(jointCtrlObj,
-	        min=0, ln="blend",max=1,keyable=True,at='double',dv=DYN_BLEND)
-
-def lock_and_hide_attr(jointCtrlObj):
-	""" Lock the attribute and hide it from the menu.
-	Args:
-		jointCtrlObj - (str)
-			Name of the controller object
-	"""
-	attrs = ['tx', 'ty', 'tz',
-	         'rx', 'ry', 'rz',
-	         'sx', 'sy', 'sz',]
-	for attr in attrs:
-		setAttr('{obj}.{attr}'.format(obj = jointCtrlObj, attr = attr), 
-	        	lock=True, 
-	                keyable=False
-		)
-		
-def connect_controller_to_system(ctrl, system, attrs):
-	""" Connect the system attributes to the controllers.
-	Args:
-		ctrl - (str)
-			Name of the controller
-		system - (str)
-			Name of the system to connect
-		attrs - (dict)
-			attributes to connect.  The key represents
-			the controllers attr and the value represents
-			the systems attr.
-
-	"""
-	for c_attr, s_attr in attrs.iteritems():
-		connectAttr(
-		        '{ctrl}.{attr}'.format(ctrl=ctrl, attr=c_attr), 
-		        '{system}.{attr}'.format(system=system, attr=s_attr), 
-		        f=True
-		)
-
-def build_curve_from_joint(jointPos):
-	""" Build the curve from the joint positions.
-	Args:
-		jointPos - (list)
-	        	List of joint positions containing [x,y,z]
-	        counter - (int)
-	        	Number of joint positions
-
-	"""
-	counter = len(jointPos)
-	#This string will house the command to create our curve.
-	buildCurve="curve -d 1 "
-	#Another counter integer for the for loop
-	cvCounter=0
-	#Loops over and adds the position of each joint to the buildCurve string.
-	for i in range(cvCounter, counter):
-		buildCurve = "{curve} -p {jpos}".format(
-	                curve = buildCurve,
-	                jpos = " ".join([str(pos) for pos in jointPos[i]])
-	        )
-	buildCurve = buildCurve + ";"
-	#Adds the end terminator to the build curve command
-	#Evaluates the $buildCurve string as a Maya command. (creates the curve running through the joints)
-	return str(mel.eval(buildCurve))
-
-def add_name_to_attr(jointCtrlObj, obj_names):
-	""" Add specified names to the attributes.
-	Args:
-		jointCtrlObj - (str)
-	        	Name of the controller object
-	        obj_names - (dict)
-	        	Dict with obj as keys and names as values
-	"""
-	for obj, name in obj_names.iteritems():
-		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
-		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
-	
-def set_chain_attr_values(baseJoint):
-	""" Set the dynamics chain attrs from GUI values.
-	Args:
-		baseJoint - (str)
-			Name of the base joint which the control is applied to
-	                
-	"""
-	# Set dynamic chain attributes according to creation options
-	sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
-	sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
-	sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
-	setAttr((baseJoint + "DynChainControl.stiffness"),
-                sliderStiffness)
-	setAttr((baseJoint + "DynChainControl.damping"),
-                sliderDamping)
-	setAttr((baseJoint + "DynChainControl.drag"),
-                sliderDrag)
-
-def get_joint_info(currentJoint, endJoint):
-	joint_names = []
-	jointPos = []
-	controls = []
-	while currentJoint != endJoint:
-		joint_names.append(currentJoint)
-		jointPos.append(joint(currentJoint, q=1, p=1, a=1))
-		pickWalk(d='down')
-		sel = ls(selection=True)
-		child = sel[0]
-		while not isinstance(child, Joint):
-			if isinstance(child, Transform) and 'CON' in str(child):
-				controls.append(child)
-			prev_sel = child
-			pickWalk(d='down')
-			sel = ls(selection=True)
-			# Something doesn't move smoothly down the chain
-			if prev_sel == sel[0]:
-				children = sel[0].getChildren()
-				if not children:
-					# We went too far, go back to get the children
-					pickWalk(d='up')
-					sel = ls(selection=True)
-					children = sel[0].getChildren()
-				child = [item for item in children if isinstance(item, Joint)][0]
-			else:
-				child = sel[0]
-				
-		currentJoint=child
-		select(currentJoint)
-		sel=mc.ls(selection=True)
-	#Theses 3 lines store the position of the end joint that the loop will miss.
-	currentJoint=sel[0]
-	joint_names.append(currentJoint)
-	jointPos.append(joint(currentJoint, q=1,p=1,a=1))
-	return joint_names, jointPos, controls
 
 #---------------------------------------------------------------------------------#
 # Main Functions
@@ -332,24 +417,7 @@ def create_dynamic_chain():
 		# Create the list of joints to be parent constrained to the FK joints
 		joint_list = []
 		blend_joints = []
-		select(deselect=True)
-		for i, pos in enumerate(jointPos):
-			joint_list.append(
-				joint(
-					p=(pos[0], pos[1], pos[2]), 
-					name='{0}{1}'.format(joint_names[i], DYN_SUFFIX)
-			        )
-			)
-
-		# Create the blend joints
-		select(deselect=True)
-		for i, pos in enumerate(jointPos):
-			blend_joints.append(
-				joint(
-					p=(pos[0], pos[1], pos[2]), 
-					name='{0}{1}'.format(joint_names[i], BLND_SUFFIX)
-				)
-			)
+		create_joints(joint_names, jointPos, joint_list, blend_joints)
 		#reset base joint and end joint
 		baseJoint = joint_list[0]
 		endJoint = joint_list[-1]
@@ -518,31 +586,8 @@ def create_dynamic_chain():
 		
 		addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 		# Constrain the dynamic chain to the joint
-		constraint_weights = []
-		for i, cur_joint in enumerate(joint_list):
-			try:
-				scaleConstraint(cur_joint, joint_names[i])
-				constraint_weights.append(
-					parentConstraint(
-						cur_joint, 
-				                joint_names[i], 
-				                tl=True, 
-				                mo=True, 
-				                wal=True
-				        )
-				)
-			except RuntimeError as e:
-				warning("Dynamic joints could not constrain to original joints.\n" + e)
-	
-		# Create constraints from original joints to the duplicate blend joints	
-		for i, cur_joint in enumerate(blend_joints):
-			#TEST constrain blend joints to original
-			try:
-				scaleConstraint(cur_joint, joint_names[i])
-				parentConstraint(cur_joint, joint_names[i], mo=True)
-			except RuntimeError as e:
-				warning("Blended joints could not constrain to original joints.\n" + e)
-			
+		constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
+
 		# For each constraint that was created, link that to a reverse
 		reverse_nodes = []
 		for p_constraint in constraint_weights:
@@ -562,29 +607,6 @@ def create_dynamic_chain():
 		# Print feedback for user
 		displayInfo("Dynamic joint chain successfully setup!\n")
 		
-def replace_joint_nodes(base_node, all_nodes, blend_joints):
-	""" This function will match new controls to the blended joints and delete the old 
-	duplicated joints. Take a parent base node, traverse through its entire tree, and replace
-	all of its joints with relative blended joints.  Also, hides the blended joints visibility.
-
-	"""
-	all_nodes.append(base_node)
-	children = base_node.getChildren()
-	nodes_to_delete = []
-	if not children:
-		return all_nodes
-	else:
-		for child in children:
-			if isinstance(child, Joint):
-				for joint in blend_joints:
-					if str(child) in str(joint):
-						nodes_to_delete.append(child)
-						parent(joint, base_node)
-						setAttr('{0}.visibility'.format(joint), False)
-						break
-			all_nodes = replace_joint_nodes(child, all_nodes, blend_joints)
-	return all_nodes
-
 #///////////////////////////////////////////////////////////////////////////////////////
 #								Collisions Procedure
 #///////////////////////////////////////////////////////////////////////////////////////
@@ -790,7 +812,6 @@ def delete_dynamic_chain():
 	if not mel.attributeExists("bakingState", chainCtrl):
 		error=1
 		mel.warning("Please select a chain controller. No dynamics were deleted.")
-		
 	
 	elif ((getAttr(chainCtrl + ".bakingState")) == 0) and ((getAttr(chainCtrl + ".isStretchy")) == 1):
 		result=str(confirmDialog(title="Delete Dynamics Warning",
