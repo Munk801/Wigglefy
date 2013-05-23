@@ -185,7 +185,7 @@ def connect_controller_to_system(ctrl, system, attrs):
 		        f=True
 		)
 
-def build_curve_from_joint(jointPos, counter):
+def build_curve_from_joint(jointPos):
 	""" Build the curve from the joint positions.
 	Args:
 		jointPos - (list)
@@ -194,12 +194,13 @@ def build_curve_from_joint(jointPos, counter):
 	        	Number of joint positions
 
 	"""
+	counter = len(jointPos)
 	#This string will house the command to create our curve.
 	buildCurve="curve -d 1 "
 	#Another counter integer for the for loop
 	cvCounter=0
 	#Loops over and adds the position of each joint to the buildCurve string.
-	for i in range(cvCounter, counter + 1):
+	for i in range(cvCounter, counter):
 		buildCurve = "{curve} -p {jpos}".format(
 	                curve = buildCurve,
 	                jpos = " ".join([str(pos) for pos in jointPos[i]])
@@ -222,6 +223,12 @@ def add_name_to_attr(jointCtrlObj, obj_names):
 		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
 	
 def set_chain_attr_values(baseJoint):
+	""" Set the dynamics chain attrs from GUI values.
+	Args:
+		baseJoint - (str)
+			Name of the base joint which the control is applied to
+	                
+	"""
 	# Set dynamic chain attributes according to creation options
 	sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
 	sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
@@ -233,10 +240,51 @@ def set_chain_attr_values(baseJoint):
 	setAttr((baseJoint + "DynChainControl.drag"),
                 sliderDrag)
 
+def get_joint_info(currentJoint, endJoint):
+	joint_names = []
+	jointPos = []
+	controls = []
+	while currentJoint != endJoint:
+		joint_names.append(currentJoint)
+		jointPos.append(joint(currentJoint, q=1, p=1, a=1))
+		pickWalk(d='down')
+		sel = ls(selection=True)
+		child = sel[0]
+		while not isinstance(child, Joint):
+			if isinstance(child, Transform) and 'CON' in str(child):
+				controls.append(child)
+			prev_sel = child
+			pickWalk(d='down')
+			sel = ls(selection=True)
+			# Something doesn't move smoothly down the chain
+			if prev_sel == sel[0]:
+				children = sel[0].getChildren()
+				if not children:
+					# We went too far, go back to get the children
+					pickWalk(d='up')
+					sel = ls(selection=True)
+					children = sel[0].getChildren()
+				child = [item for item in children if isinstance(item, Joint)][0]
+			else:
+				child = sel[0]
+				
+		currentJoint=child
+		select(currentJoint)
+		sel=mc.ls(selection=True)
+	#Theses 3 lines store the position of the end joint that the loop will miss.
+	currentJoint=sel[0]
+	joint_names.append(currentJoint)
+	jointPos.append(joint(currentJoint, q=1,p=1,a=1))
+	return joint_names, jointPos, controls
+
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
 def create_dynamic_chain():
+	""" Create the dynamic joint chains.  Note:  You must have the base controller/joint 
+	selected and the end controller/effector shift selected.
+	
+	"""
 	# List of controls
 	controls = []	
 	
@@ -280,44 +328,7 @@ def create_dynamic_chain():
 		mel.warning("Please select a base and tip joint to make dynamic.")
 	else:
 		select(baseJoint)
-		#Initial selection going into the while loop/
-		#Will loop through all the joints between the base and end by pickwalking through them.
-		#The loop stores the world space of each joint into $jointPos as it iterates over them.
-		joint_names = []
-		while currentJoint != endJoint:
-			joint_names.append(currentJoint)
-			#jointPos[counter]=joint(currentJoint,q=1,p=1,a=1)
-			jointPos.append(joint(currentJoint, q=1, p=1, a=1))
-			pickWalk(d='down')
-			sel = ls(selection=True)
-			child = sel[0]
-			while not isinstance(child, Joint):
-				if isinstance(child, Transform) and 'CON' in str(child):
-					controls.append(child)
-				prev_sel = child
-				pickWalk(d='down')
-				sel = ls(selection=True)
-				# Something doesn't move smoothly down the chain
-				if prev_sel == sel[0]:
-					children = sel[0].getChildren()
-					if not children:
-						# We went too far, go back to get the children
-						pickWalk(d='up')
-						sel = ls(selection=True)
-						children = sel[0].getChildren()
-					child = [item for item in children if isinstance(item, Joint)][0]
-				else:
-					child = sel[0]
-					
-			currentJoint=child
-			select(currentJoint)
-			counter+=1
-		
-		sel=mc.ls(selection=True)
-		#Theses 3 lines store the position of the end joint that the loop will miss.
-		currentJoint=sel[0]
-		joint_names.append(currentJoint)
-		jointPos.append(joint(currentJoint, q=1,p=1,a=1))
+		joint_names, jointPos, controls = get_joint_info(currentJoint, endJoint)
 		# Create the list of joints to be parent constrained to the FK joints
 		joint_list = []
 		blend_joints = []
@@ -344,7 +355,7 @@ def create_dynamic_chain():
 		endJoint = joint_list[-1]
 		#Now that $jointPos[] holds the world space coords of our joints, 
 		#we need to build a cv curve with points at each XYZ coord.
-		nameOfCurve = build_curve_from_joint(jointPos, counter)	
+		nameOfCurve = build_curve_from_joint(jointPos)	
 		#Make curve dynamic.
 		select(nameOfCurve)
 		#mel.makeCurvesDynamicHairs()
@@ -512,7 +523,13 @@ def create_dynamic_chain():
 			try:
 				scaleConstraint(cur_joint, joint_names[i])
 				constraint_weights.append(
-					parentConstraint(cur_joint, joint_names[i], tl=True, mo=True, wal=True)
+					parentConstraint(
+						cur_joint, 
+				                joint_names[i], 
+				                tl=True, 
+				                mo=True, 
+				                wal=True
+				        )
 				)
 			except RuntimeError as e:
 				warning("Dynamic joints could not constrain to original joints.\n" + e)
@@ -745,7 +762,11 @@ def bake_dynamic_chain():
 		bakingJoints=(bakingJoints + baseJoint + "\"}")
 		#Add the base joint that the while loop will miss
 		#Concatenate the bake simulation command with the necessary joint names.
-		bakingJoints=("bakeResults -simulation true -t " + frameRangeToBake + " -sampleBy 1 -disableImplicitControl true -preserveOutsideKeys true -sparseAnimCurveBake false -controlPoints false -shape true" + bakingJoints)
+		bakingJoints=(
+		        "bakeResults -simulation true -t " + frameRangeToBake + \
+		        " -sampleBy 1 -disableImplicitControl true -preserveOutsideKeys true"\
+		        " -sparseAnimCurveBake false -controlPoints false -shape true" + bakingJoints
+		)
 		#Evaluate the $bakingJoints string to bake the simulation.
 		mel.eval(bakingJoints)
 		#Tell control object that joints are baked.
@@ -783,7 +804,6 @@ def delete_dynamic_chain():
 		if result == "Cancel":
 			error=1
 			mel.warning("Dynamics were not deleted for " + chainCtrl)
-			
 		
 	if error == 0:
 		#Delete Hair System Node
@@ -874,7 +894,10 @@ def create_character_from_prefs():
 				for setting, value in attr.attrib.iteritems():
 					if setting == 'name':
 						continue
-					setAttr('{0}.{1}'.format(attr.attrib['name'], setting), float(value))
+					setAttr(
+					        '{0}.{1}'.format(attr.attrib['name'], setting), 
+					        float(value)
+					)
 
 
 
