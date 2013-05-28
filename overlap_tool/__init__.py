@@ -170,6 +170,17 @@ def connect_controller_to_system(ctrl, system, attrs):
 		)
 
 def constrain_joints(joint_names, joint_list, blend_joints):
+	""" Constrains the original joints to the dynamic joints and
+	the blended joints.  Does a parent and scale constrain to the original joints
+	Args:
+		joint_names : (list)
+			List of joint names
+	        joint_list : (list)
+			List of dynamic joints
+	        blend_joints : (list)
+			List of blend joints
+	        
+	"""
 	constraint_weights = []
 	for i, cur_joint in enumerate(joint_list):
 		try:
@@ -188,7 +199,6 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 
 	# Create constraints from original joints to the duplicate blend joints	
 	for i, cur_joint in enumerate(blend_joints):
-		#TEST constrain blend joints to original
 		try:
 			scaleConstraint(cur_joint, joint_names[i])
 			parentConstraint(cur_joint, joint_names[i], mo=True)
@@ -231,6 +241,21 @@ def create_joints(joint_names, jointPos, joint_list, blend_joints):
 	        )
 		
 def get_joint_info(currentJoint, endJoint, controls):
+	""" Uses the base joint and the end joint to gather all
+	the joint names and joint positions.  Will also append
+	any controllers to the given list. 
+	Args:
+		currentJoint : (str)
+			The base joint to start from
+	        endJoint : (str)
+			The end effector joint
+	        controls : (list)
+			The list that you want to append any controls to
+	Returns:
+		(joint_names, jointPos)
+			Returns both a list of the joint names and the joint positions.
+	
+	"""
 	joint_names = []
 	jointPos = []
 	while currentJoint != endJoint:
@@ -613,16 +638,18 @@ def create_dynamic_chain():
 	
 	addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 	# Constrain the dynamic chain to the joint
-	constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
+	#constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
+	constraint_weights = constrain_joints(controls, joint_list, blend_joints)
 
 	# For each constraint that was created, link that to a reverse
 	reverse_nodes = []
-	for p_constraint in constraint_weights:
+	for i,p_constraint in enumerate(constraint_weights):
 		reverse_node = createNode('reverse')
 		reverse_nodes.append(reverse_node)
-		name_base = "_".join(p_constraint.split('_')[:-1])
-		in_attr = "{0}.{1}{2}W0".format(str(p_constraint), name_base, DYN_SUFFIX)
-		out_attr = "{0}.{1}{2}W1".format(str(p_constraint), name_base, BLND_SUFFIX)
+		name_base = "_".join(joint_names[i].split('_')[:-1])
+		name_base = name_base.split(':')[-1]
+		in_attr = "{0}.{1}_JNT{2}W0".format(str(p_constraint), name_base, DYN_SUFFIX)
+		out_attr = "{0}.{1}_JNT{2}W1".format(str(p_constraint), name_base, BLND_SUFFIX)
 		connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
 		connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
 		connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)
@@ -630,6 +657,9 @@ def create_dynamic_chain():
 	# Duplicate controls and attach to blend joints
 	all_nodes = []
 	new_control = ''
+	# If select all controls is checked, then we need every control.  Whereas if it is,
+	# not checked, we can assume that the controls are in a hierarchy structure.  Thus,
+	# getting the first control will grab the hierarchy for the entire control set
 	if checkBoxGrp('selectAllControls',q=1,value1=1):
 		duplicate_controls = [duplicate(control) for control in controls]
 		new_control = duplicate_controls[0]
@@ -640,10 +670,14 @@ def create_dynamic_chain():
 		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
 	# Add this to keep track in case of deletion
 	add_name_to_attr(jointCtrlObj, {new_control : 'blendControl'})
-	
-	# Group the Dynamic Chain Control with base control
-	parent(baseJoint + "DynChainGroup", controls[0])
-	parent(baseJoint, controls[0])
+	parent(new_control, world=True)
+	select(deselect=True)
+	# Create a new group
+	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
+	# Parent all the controls to new group	
+	parent(new_control, dynamic_group)
+	parent(baseJoint + "DynChainGroup", dynamic_group)
+	parent(dynamic_group, controls[0].getParent())
 	# Print feedback for user
 	displayInfo("Dynamic joint chain successfully setup!\n")
 		
@@ -737,28 +771,6 @@ def collide_with_chain():
 			evalEcho(cmd)
 			cmd="connectAttr time1.outTime " + nameofGeoConnector+ ".currentTime"
 			evalEcho(cmd)			
-			#Connect all the necessary attributes to make the surface collide
-			#connectAttr((objShape[0] + ".message"),(nameofGeoConnector + ".owner"))
-			#connectAttr((objShape[0] + ".worldMatrix[0]"),(nameofGeoConnector + ".worldMatrix"))
-			#connectAttr((objShape[0] + ".outMesh"),(nameofGeoConnector + ".localGeometry"))
-			#connectAttr((hairShape + ".collisionResilience"),
-				#(nameofGeoConnector + ".resilience"), na=True, f=True)
-			#connectAttr((hairShape + ".collisionFriction"),
-				#(nameofGeoConnector + ".friction"), na=True, f=True)
-			#connectAttr((hairShape + ".collisionGeometry"),
-				#(nameofGeoConnector + ".sweptGeometry"), na=True, f=True)
-			#connectAttr('time1.outTime',(nameofGeoConnector + ".currentTime"))
-			#connectAttr((nameofGeoConnector + ".owner"), (objShape[0] + ".message"), f=True, na=True)
-			#connectAttr((nameofGeoConnector + ".worldMatrix"), (objShape[0] + ".worldMatrix[0]"), f=True, na=True)
-			#connectAttr((nameofGeoConnector + ".localGeometry"), (objShape[0] + ".outMesh"), f=True, na=True)
-			#connectAttr((nameofGeoConnector + ".resilience"), 
-			            #(hairShape + ".collisionResilience"), f=True,  na = True)
-			
-			#connectAttr((nameofGeoConnector + ".friction"), 
-			            #(hairShape + ".collisionFriction"), f=True, na = True)
-			#connectAttr((nameofGeoConnector + ".sweptGeometry"), 
-			            #(hairShape + ".collisionGeometry"), f = True, na = True)
-			#connectAttr((nameofGeoConnector + ".currentTime"), 'time1.outTime', f = True, na=True)
 			#Print output to the user for each connected collider.
 			print str(obj) + " has been set to collide with " + str(chainCtrl) + "\n"
 			
