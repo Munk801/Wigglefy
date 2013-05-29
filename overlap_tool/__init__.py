@@ -85,7 +85,7 @@ def add_dynamic_attributes(jointCtrlObj):
 	addAttr(jointCtrlObj,
                 min=0,ln="gravity",max=10,keyable=True,at='double',dv=DYN_GRAVITY)
 	addAttr(jointCtrlObj,
-                min=0,ln="controllerSize",max=100,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
+                min=0,ln="controllerSize",max=500,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
 	addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
 	setAttr((jointCtrlObj + ".turbulenceCtrl"),
                 lock=True)
@@ -183,7 +183,7 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 		try:
 			scaleConstraint(cur_joint, joint_names[i])
 		except RuntimeError as e:
-			warning("Unable to perform scale constrain on {0}".format(joint_names[i]))
+			displayInfo("Unable to perform scale constrain on {0}".format(joint_names[i]))
 		try:
 			constraint_weights.append(
 		                parentConstraint(
@@ -195,18 +195,18 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 		                )
 		        )
 		except RuntimeError as e:
-			warning("Dynamic joints could not constrain to original joints.\n" + e)
+			displayInfo("Dynamic joints could not constrain to original joints.\n" + e)
 
 	# Create constraints from original joints to the duplicate blend joints	
 	for i, cur_joint in enumerate(blend_joints):
 		try:
 			scaleConstraint(cur_joint, joint_names[i])
 		except RuntimeError as e:
-			warning("Unable to perform scale constrain on {0}".format(joint_names[i])
+			displayInfo("Unable to perform scale constrain on {0}".format(joint_names[i]))
 		try:
 			parentConstraint(cur_joint, joint_names[i], mo=True)
 		except RuntimeError as e:
-			warning("Blended joints could not constrain to original joints.\n" + e)
+			displayInfo("Blended joints could not constrain to original joints.\n" + e)
 	return constraint_weights
 
 def create_joints(joint_names, jointPos, joint_list, blend_joints):
@@ -414,13 +414,18 @@ def create_dynamic_chain():
 	selected and the end controller/effector shift selected.
 	
 	"""
+	global USING_ALL_CONTROLS
 	# List of controls
 	controls = []	
 	
 	# Get the selection of controls
 	sel = ls(selection=True)
 	
-	if checkBoxGrp('selectAllControls',q=1,value1=1):
+	# Check if select all controls is checked
+	if checkBoxGrp('selectAllControls', q=1, value1=1):
+		USING_ALL_CONTROLS = True
+	
+	if USING_ALL_CONTROLS: 
 		controls = sel
 		#for control in controls:
 			#get_joints_under_controls(control, joint_names, jointPos)
@@ -458,7 +463,7 @@ def create_dynamic_chain():
 	joint_list = []
 	jointPos = []
 	#Check to ensure proper selection
-	if checkBoxGrp('selectAllControls',q=1,value1=1):
+	if USING_ALL_CONTROLS: 
 		for control in controls:
 			get_joints_under_controls(control, joint_names, jointPos)
 	#if not ((objectType(baseJoint, isType="joint")) and 
@@ -554,8 +559,8 @@ def create_dynamic_chain():
 	if checkBoxGrp('stretchCheckbox',q=1,value1=1):
 		setAttr((jointCtrlObj + ".isStretchy"), 1)
 	
-	if checkBoxGrp('selectAllControls',q=1,value1=1):
-		setAttr((jointCtrlObj + ".usesAllControls"), q = 1, value1 = 1)
+	if USING_ALL_CONTROLS: 
+		setAttr((jointCtrlObj + ".usesAllControls"), 1)
 
 	#Overide the Hair dynamics so that the follicle controls the curve dynamics
 	select(nameOfFollicle)
@@ -666,36 +671,48 @@ def create_dynamic_chain():
 	# Duplicate controls and attach to blend joints
 	all_nodes = []
 	new_control = ''
+	select(deselect=True)
+	new_ctrl_group = group(name='{0}_BlendCtrlGroup'.format(str(jointCtrlObj)))
 	# If select all controls is checked, then we need every control.  Whereas if it is,
 	# not checked, we can assume that the controls are in a hierarchy structure.  Thus,
 	# getting the first control will grab the hierarchy for the entire control set
-	if checkBoxGrp('selectAllControls',q=1,value1=1):
-		duplicate_controls = [duplicate(control) for control in controls]
+	if USING_ALL_CONTROLS: 
+		duplicate_controls = [duplicate(str(control)) for control in controls]
 		new_control = duplicate_controls[0][0]
 		for dup_ctrl in duplicate_controls:
 			all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
+			parent(dup_ctrl, new_ctrl_group)
 	else:	
-		new_control = duplicate(controls[0])[0]
+		first_control = str(controls[0])
+		new_control = duplicate(first_control, renameChildren=True)[0]
 		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
+		parent(new_control, new_ctrl_group)
 	# Add this to keep track in case of deletion
 	add_name_to_attr(jointCtrlObj, {new_control : 'blendControl'})
-	parent(new_control, world=True)
+	#parent(new_control, world=True)
 	select(deselect=True)
 	# Create a new group
 	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
 	# Parent all the controls to new group
+	parent(blend_joints[0], dynamic_group)
 	parent(joint_list[0], dynamic_group)
-	parent(new_control, dynamic_group)
+	#parent(new_control, dynamic_group)
+	parent(new_ctrl_group, dynamic_group)
 	parent(baseJoint + "DynChainGroup", dynamic_group)
 	parent(dynamic_group, controls[0].getParent())
 	
 	# Turn off visibility on new controls
+	addAttr(jointCtrlObj, ln="blendCtrlVis", at='bool', keyable=True)
+	connectAttr('{0}.blendCtrlVis'.format(jointCtrlObj),'{0}.visibility'.format(new_ctrl_group)) 
 	try:
 		setAttr("{0}.visibility".format(new_control), 0)
 	except RuntimeError as e:
-		warning("Cannot set visibility for {0}".format(new_control))
+		displayInfo("Cannot set visibility for {0}".format(new_control))
 	
 	# Print feedback for user
+	select(jointCtrlObj)
+	
+	USING_ALL_CONTROLS = False
 	displayInfo("Dynamic joint chain successfully setup!\n")
 		
 #///////////////////////////////////////////////////////////////////////////////////////
@@ -831,8 +848,8 @@ def bake_dynamic_chain():
 			# Check if the dialog has been cancelled
 			# Check if end condition has been reached
 			
-		if progressWindow(query=1, progress=1) >= 100:
-			break
+		#if progressWindow(query=1, progress=1) >= 100:
+			#break
 			
 		amount=((100 / i) * j)
 		progressWindow(edit=1,progress=amount)
@@ -977,16 +994,30 @@ def enable_dynamics():
 def create_character_from_prefs():
 	# XXX Doesn't do any error checking for names in xml file
 	# XXX Only does joints.  What about attrs?
+	global USING_ALL_CONTROLS
 	item = fileDialog()
 	prefs = xml_utils.ElementTree.parse(str(item))
 	root = prefs.getroot()
+	creation_dict = {}
+	# Get all the presets and store them in a dictionary that can be retrieved later
+	for child in root:
+		if child.tag == 'presets':
+			for preset in child.getchildren():
+				creation_dict[preset.attrib['name']] = preset.attrib['allCtrls']
+				
 	for child in root:
 		if child.tag == 'joints':
 			for joint in child.getchildren():
-				base_joint = joint.attrib['base']
-				end_joint = joint.attrib['end']
-				select([base_joint, end_joint], replace=True)
-				create_dynamic_chain()
+				if creation_dict.has_key(joint.attrib['name']):
+					USING_ALL_CONTROLS = creation_dict[joint.attrib['name']]
+				if USING_ALL_CONTROLS:
+					select(joint.attrib['controls'].split(','), replace=True)
+					create_dynamic_chain()
+				else:
+					base_joint = joint.attrib['base']
+					end_joint = joint.attrib['end']
+					select([base_joint, end_joint], replace=True)
+					create_dynamic_chain()
 	for child in root:
 		if child.tag =='attrs':
 			for attr in child.getchildren():
@@ -1015,10 +1046,10 @@ def save_character_to_prefs():
 		uses_all_ctrls = getAttr('{0}.usesAllControls'.format(ctrl))
 		if uses_all_ctrls:
 			preset_info = xml_utils.ElementTree.SubElement(presets, 'preset')
-			preset_info.set('allCtrls', True)
+			preset_info.set('allCtrls', 'True')
 			preset_info.set('name', ctrl)
 			controls = getAttr('{0}.allControls'.format(ctrl))
-			joint_info = xml_utils.ElementTree.SubElements(joints, 'joint')
+			joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
 			joint_info.set('controls', controls)
 			joint_info.set('name', ctrl)
 		else:
