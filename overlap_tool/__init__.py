@@ -40,14 +40,6 @@ import ani_tools.rmaya.ani_library as ani_lib
 from maya_tools.ui.gui_tool_kit import *
 from pipe_utils import xml_utils
 
-# UI Stuff
-from PyQt4 import QtGui, QtCore
-from ui_lib.inputs.button import RButton
-from ui_lib.widgets.label import RLabel
-from ui_lib.window import RWindow
-from ui_lib.layouts.box_layout import RVBoxLayout, RHBoxLayout
-from ui_lib.layouts.form_layout import RFormLayout
-
 #---------------------------------------------------------------------------------#
 # Globals
 #---------------------------------------------------------------------------------#
@@ -64,6 +56,11 @@ DYN_CONTROLLER_SIZE = 5
 
 DYN_SUFFIX = '_DYN'
 BLND_SUFFIX = '_BLND'
+
+USING_ALL_CONTROLS = False
+HAS_TIP_CONSTRAINT = False
+ALLOW_CHAIN_STRETCH = False
+
 
 #---------------------------------------------------------------------------------#
 # Helper Functions 
@@ -185,6 +182,9 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 	for i, cur_joint in enumerate(joint_list):
 		try:
 			scaleConstraint(cur_joint, joint_names[i])
+		except RuntimeError as e:
+			warning("Unable to perform scale constrain on {0}".format(joint_names[i]))
+		try:
 			constraint_weights.append(
 		                parentConstraint(
 		                        cur_joint, 
@@ -201,6 +201,9 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 	for i, cur_joint in enumerate(blend_joints):
 		try:
 			scaleConstraint(cur_joint, joint_names[i])
+		except RuntimeError as e:
+			warning("Unable to perform scale constrain on {0}".format(joint_names[i])
+		try:
 			parentConstraint(cur_joint, joint_names[i], mo=True)
 		except RuntimeError as e:
 			warning("Blended joints could not constrain to original joints.\n" + e)
@@ -534,20 +537,26 @@ def create_dynamic_chain():
                 endJoint : 'endJoint',
                 joint_names[0] : 'linkedBaseJoint',
                 joint_names[-1] : 'linkedEndJoint',
+		controls[0] : 'baseControl',
+		controls[-1] : 'endControl',
+		','.join([str(control) for control in controls]) : 'allControls',
         }
 	if nameOfHairConstraint:
 		obj_names[nameOfHairConstraint[0]] = 'nameOfTipConstraint'
 	add_name_to_attr(jointCtrlObj, obj_names)
 	
 	#Add special attribute to house baking state
-	addAttr(jointCtrlObj,
-                ln='bakingState',at='bool')
+	addAttr(jointCtrlObj, ln='bakingState', at='bool')
 	#Add special attribute to house stretchy state
-	addAttr(jointCtrlObj,
-                ln='isStretchy',at='bool')
+	addAttr(jointCtrlObj, ln='isStretchy', at='bool')
+	#Add attribute to house if all controls needed to create dynamics
+	addAttr(jointCtrlObj, ln='usesAllControls', at='bool')	
 	if checkBoxGrp('stretchCheckbox',q=1,value1=1):
 		setAttr((jointCtrlObj + ".isStretchy"), 1)
 	
+	if checkBoxGrp('selectAllControls',q=1,value1=1):
+		setAttr((jointCtrlObj + ".usesAllControls"), q = 1, value1 = 1)
+
 	#Overide the Hair dynamics so that the follicle controls the curve dynamics
 	select(nameOfFollicle)
 	nameOfFollicle=pickWalk(d='down')
@@ -662,7 +671,7 @@ def create_dynamic_chain():
 	# getting the first control will grab the hierarchy for the entire control set
 	if checkBoxGrp('selectAllControls',q=1,value1=1):
 		duplicate_controls = [duplicate(control) for control in controls]
-		new_control = duplicate_controls[0]
+		new_control = duplicate_controls[0][0]
 		for dup_ctrl in duplicate_controls:
 			all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
 	else:	
@@ -674,10 +683,18 @@ def create_dynamic_chain():
 	select(deselect=True)
 	# Create a new group
 	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
-	# Parent all the controls to new group	
+	# Parent all the controls to new group
+	parent(joint_list[0], dynamic_group)
 	parent(new_control, dynamic_group)
 	parent(baseJoint + "DynChainGroup", dynamic_group)
 	parent(dynamic_group, controls[0].getParent())
+	
+	# Turn off visibility on new controls
+	try:
+		setAttr("{0}.visibility".format(new_control), 0)
+	except RuntimeError as e:
+		warning("Cannot set visibility for {0}".format(new_control))
+	
 	# Print feedback for user
 	displayInfo("Dynamic joint chain successfully setup!\n")
 		
@@ -992,14 +1009,25 @@ def save_character_to_prefs():
 	root = xml_utils.ElementTree.Element('data')
 	joints = xml_utils.ElementTree.SubElement(root, 'joints')
 	attrs = xml_utils.ElementTree.SubElement(root, 'attrs')
+	presets = xml_utils.ElementTree.SubElement(root, 'presets')
 	# Save the joints
 	for ctrl in all_ctrls:
-		base_joint = getAttr('{0}.linkedBaseJoint'.format(ctrl))
-		end_joint = getAttr('{0}.linkedEndJoint'.format(ctrl))
-		joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
-		joint_info.set('base', base_joint)
-		joint_info.set('end', end_joint)
-		joint_info.set('name', ctrl)
+		uses_all_ctrls = getAttr('{0}.usesAllControls'.format(ctrl))
+		if uses_all_ctrls:
+			preset_info = xml_utils.ElementTree.SubElement(presets, 'preset')
+			preset_info.set('allCtrls', True)
+			preset_info.set('name', ctrl)
+			controls = getAttr('{0}.allControls'.format(ctrl))
+			joint_info = xml_utils.ElementTree.SubElements(joints, 'joint')
+			joint_info.set('controls', controls)
+			joint_info.set('name', ctrl)
+		else:
+			base_joint = getAttr('{0}.baseControl'.format(ctrl))
+			end_joint = getAttr('{0}.endControl'.format(ctrl))
+			joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
+			joint_info.set('base', base_joint)
+			joint_info.set('end', end_joint)
+			joint_info.set('name', ctrl)
 		
 		# Save the attrs
 		attr_info = xml_utils.ElementTree.SubElement(attrs, 'attr')
@@ -1113,14 +1141,6 @@ def main():
 	button(c=lambda *args: overlap_tool.save_character_to_prefs(), label="Save Character Prefs")
 	#Show Main Window Command
 	showWindow('dynChainWindow')
-	
-class OverlapTool(RWindow):
-	def __init__(self):
-		super(OverlapTool, self).__init__()
-		self.initUI()
-		
-	def initUI(self):
-		pass
 
 if __name__ == "__main__":
 	main()
