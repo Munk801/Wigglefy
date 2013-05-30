@@ -106,7 +106,7 @@ def add_name_to_attr(jointCtrlObj, obj_names):
 	        obj_names - (dict)
 	        	Dict with obj as keys and names as values
 	"""
-	for obj, name in obj_names.iteritems():
+	for name, obj in obj_names.iteritems():
 		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
 		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
 
@@ -179,6 +179,9 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 	        
 	"""
 	constraint_weights = []
+	# In the instance that there are more controls than joints, use the same controller
+	if len(joint_names) < len(joint_list):
+		joint_names.append(joint_names[0])
 	for i, cur_joint in enumerate(joint_list):
 		try:
 			scaleConstraint(cur_joint, joint_names[i])
@@ -420,16 +423,40 @@ def create_dynamic_chain():
 	
 	# Get the selection of controls
 	sel = ls(selection=True)
-	
-	# Check if select all controls is checked
-	if checkBoxGrp('selectAllControls', q=1, value1=1):
+	# Nothing was selected	
+	if len(sel) == 0:
+		warning("No controllers selected.  Please select controllers to create a chain.")
+		return
+	# Non-hierarchy controls were selected.  Process each of them individually
+	elif len(sel) > 2:
 		USING_ALL_CONTROLS = True
-	
-	if USING_ALL_CONTROLS: 
 		controls = sel
+		for control in controls:
+			get_joints_under_controls(control, joint_names, jointPos)
+	# Only one control was selected.  Check if that has two joints to create a chain
+	elif len(sel) == 1:
+		if not isinstance(sel[0], Joint):
+			controls.append(sel[0])
+			base_children =  sel[0].getChildren()
+			for child in base_children:
+				if isinstance(child, Joint) and child.getChildren() != []:
+					base_children.extend(child.getChildren())
+			ctrl_joints = [node for node in base_children if isinstance(node, Joint)]
+			if len(ctrl_joints) != 2:
+				warning("Only one controller selected with one joint attached.")
+			else:
+				baseJoint = ctrl_joints[0]
+				endJoint = ctrl_joints[1]
+		else:
+			warning("Only a single joint selected.  Need a base joint and end joint.")
+			return
+	# Check if select all controls is checked
+	#if checkBoxGrp('selectAllControls', q=1, value1=1):
+		#USING_ALL_CONTROLS = True
+	#if USING_ALL_CONTROLS: 
+		#controls = sel
 		#for control in controls:
 			#get_joints_under_controls(control, joint_names, jointPos)
-
 	else:
 		# There may only be a two joint set or controllers set
 		# XXX user should be able to select one controller with 2 joints attached
@@ -534,20 +561,20 @@ def create_dynamic_chain():
 	nameOfHairSystem=("hairSystemShape" + str(sizeOfString))
 	# Store all the names to the controls as an attr.
 	obj_names = {
-                nameOfHairSystem : 'nameOfHairShapeNode',
-                nameOfFollicle[0] : 'nameOfFollicleNode',
-                nameOfDynCurve : 'nameOfDynCurve',
-                nameOfUtilityNode : 'nameOfMultiDivNode',
-                baseJoint : 'baseJoint',
-                endJoint : 'endJoint',
-                joint_names[0] : 'linkedBaseJoint',
-                joint_names[-1] : 'linkedEndJoint',
-		controls[0] : 'baseControl',
-		controls[-1] : 'endControl',
-		','.join([str(control) for control in controls]) : 'allControls',
-        }
+	        'nameOfHairShapeNode' : nameOfHairSystem,
+	        'nameOfFollicleNode' : nameOfFollicle[0],
+	        'nameOfDynCurve' : nameOfDynCurve,
+	        'nameOfMultiDivNode' : nameOfUtilityNode,
+	        'baseJoint' : baseJoint,
+	        'endJoint' : endJoint,
+	        'linkedBaseJoint' : joint_names[0],
+	        'linkedEndJoint' : joint_names[-1],
+	        'baseControl' : controls[0],
+	        'endControl' : controls[-1],
+	        'allControls' : ','.join([str(control) for control in controls]),
+	}
 	if nameOfHairConstraint:
-		obj_names[nameOfHairConstraint[0]] = 'nameOfTipConstraint'
+		obj_names['nameOfTipConstraint'] = nameOfHairConstraint[0]
 	add_name_to_attr(jointCtrlObj, obj_names)
 	
 	#Add special attribute to house baking state
@@ -660,10 +687,9 @@ def create_dynamic_chain():
 	for i,p_constraint in enumerate(constraint_weights):
 		reverse_node = createNode('reverse')
 		reverse_nodes.append(reverse_node)
-		name_base = "_".join(joint_names[i].split('_')[:-1])
-		name_base = name_base.split(':')[-1]
-		in_attr = "{0}.{1}_JNT{2}W0".format(str(p_constraint), name_base, DYN_SUFFIX)
-		out_attr = "{0}.{1}_JNT{2}W1".format(str(p_constraint), name_base, BLND_SUFFIX)
+		attr_list = p_constraint.listAttr()
+		in_attr = [attr for attr in attr_list if '{0}W'.format(DYN_SUFFIX) in str(attr)][0]
+		out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)][0]
 		connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
 		connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
 		connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)
@@ -688,7 +714,7 @@ def create_dynamic_chain():
 		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
 		parent(new_control, new_ctrl_group)
 	# Add this to keep track in case of deletion
-	add_name_to_attr(jointCtrlObj, {new_control : 'blendControl'})
+	add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
 	#parent(new_control, world=True)
 	select(deselect=True)
 	# Create a new group
@@ -878,8 +904,7 @@ def bake_dynamic_chain():
 		#Evaluate the $bakingJoints string to bake the simulation.
 		mel.eval(bakingJoints)
 		#Tell control object that joints are baked.
-		setAttr((chainCtrl + ".bakingState"),
-			1)
+		setAttr((chainCtrl + ".bakingState"), 1)
 		#Print feedback to user
 		print "All joints controlled by " + chainCtrl + " have now been baked!\n"
 		
@@ -1032,9 +1057,6 @@ def create_character_from_prefs():
 
 
 def save_character_to_prefs():
-	# XXX Currently expects selection to go "base, end, base, end, etc"
-	# XXX Overrides current xml file.  Maybe it doesn't need to do that
-	
 	item = fileDialog2()
 	all_ctrls = ls(selection=True)
 	root = xml_utils.ElementTree.Element('data')
@@ -1081,10 +1103,6 @@ def save_character_to_prefs():
 	tree = xml_utils.ElementTree.ElementTree(root)
 	tree.write(str(item[0]))
 
-def pairwise(iterable):
-	a = iter(iterable)
-	return izip(a, a)
-
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
 #///////////////////////////////////////////////////////////////////////////////////////
@@ -1098,13 +1116,13 @@ def main():
 	scrollLayout(hst=0)
 	columnLayout('dynChainColumn')
 	#Dynamic Chain Creation Options Layout
-	frameLayout('creationOptions',h=150,
+	frameLayout('creationOptions',h=175,
 		borderStyle='etchedOut',
 		collapsable=True,
-		w=320,
+		w=350,
 		label="Dynamic Chain Creation Options:")
 	frameLayout('creationOptions',e=1,cl=True)
-	columnLayout(cw=300)
+	columnLayout(cw=350)
 	#Stiffness
 	floatSliderGrp('sliderStiffness',min=0,max=1,
 		cw3=(60, 60, 60),
@@ -1131,24 +1149,25 @@ def main():
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
 	#Tip Constraint Checkbox
 	separator(h=20,w=330)
-	checkBoxGrp('tipConstraintCheckbox',cw=(1, 150),label="Create Tip Constraint : ")
-	checkBoxGrp('stretchCheckbox',cw=(1, 150),label="Allow Joint Chain to Stretch: ")
-	checkBoxGrp('selectAllControls', cw=(1, 150), label = "Run on All Selected Controls ")
+	checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
+	checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
+	checkBoxGrp('selectAllControls', cw=(1, 200), label = "Check if controls are non-hierarchy: ")
 	#separator -h 20  -w 330;
 	setParent('..')
 	setParent('..')
 	#Button Layouts
+	text("Note: If controls are in a non-hierarchy, select all controls: ")
 	rowColumnLayout(nc=2,cw=[(1, 175), (2, 150)])
-	text("Select base joint, shift select tip: ")
+	text("Select base joint, shift select tip: \n")
 	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
 	text("Select all ctrls and colliders: ")
 	button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
-	text("Disable Dynamics: ")
-	button(c=lambda *args: overlap_tool.disable_dynamics(), label="Disable Dynamics")
-	text("Enable Dynamics: ")
-	button(c=lambda *args: overlap_tool.enable_dynamics(), label="Enable Dynamics")
+	#text("Disable Dynamics: ")
+	#button(c=lambda *args: overlap_tool.disable_dynamics(), label="Disable Dynamics")
+	#text("Enable Dynamics: ")
+	#button(c=lambda *args: overlap_tool.enable_dynamics(), label="Enable Dynamics")
 	setParent('..')
 	#Bake Animation Layouts
 	separator(h=20,w=330)
