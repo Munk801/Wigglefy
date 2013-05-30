@@ -60,6 +60,7 @@ BLND_SUFFIX = '_BLND'
 USING_ALL_CONTROLS = False
 HAS_TIP_CONSTRAINT = False
 ALLOW_CHAIN_STRETCH = False
+LINK_TO_JOINTS = False
 
 
 #---------------------------------------------------------------------------------#
@@ -180,36 +181,43 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 	"""
 	constraint_weights = []
 	# In the instance that there are more controls than joints, use the same controller
+	joints_per_control = int(intField('jointsPerControl',query=1,value=1))
+	constrainer = []
 	if len(joint_names) < len(joint_list):
-		joint_names.append(joint_names[0])
+		for joint in joint_names:
+			for joint_instance in range(joints_per_control):
+				constrainer.append(joint)
+	else:
+		constrainer = joint_names
+	constrainer.append(joint_names[-1])
 	for i, cur_joint in enumerate(joint_list):
 		try:
-			scaleConstraint(cur_joint, joint_names[i])
+			scaleConstraint(cur_joint, constrainer[i])
 		except RuntimeError as e:
-			displayInfo("Unable to perform scale constrain on {0}".format(joint_names[i]))
+			displayInfo("Unable to perform scale constrain on {0}".format(constrainer[i]))
 		try:
 			constraint_weights.append(
 		                parentConstraint(
 		                        cur_joint, 
-		                        joint_names[i], 
+		                        constrainer[i], 
 		                        tl=True, 
 		                        mo=True, 
 		                        wal=True
 		                )
 		        )
 		except RuntimeError as e:
-			displayInfo("Dynamic joints could not constrain to original joints.\n" + e)
+			displayInfo("Dynamic joints could not constrain to original joints.\n" )
 
 	# Create constraints from original joints to the duplicate blend joints	
 	for i, cur_joint in enumerate(blend_joints):
 		try:
-			scaleConstraint(cur_joint, joint_names[i])
+			scaleConstraint(cur_joint, constrainer[i])
 		except RuntimeError as e:
-			displayInfo("Unable to perform scale constrain on {0}".format(joint_names[i]))
+			displayInfo("Unable to perform scale constrain on {0}".format(constrainer[i]))
 		try:
-			parentConstraint(cur_joint, joint_names[i], mo=True)
+			parentConstraint(cur_joint, constrainer[i], mo=True)
 		except RuntimeError as e:
-			displayInfo("Blended joints could not constrain to original joints.\n" + e)
+			displayInfo("Blended joints could not constrain to original joints.\n")
 	return constraint_weights
 
 def create_joints(joint_names, jointPos, joint_list, blend_joints):
@@ -409,6 +417,21 @@ def get_joints_under_controls(control, joint_names, jointPos):
 				get_joints_under_controls(child, joint_names, jointPos)
 	return
 
+def find_end_joint(start_control, end_joint= '', to_next_control=False):
+	children = start_control.getChildren()
+	if not children:
+		return end_joint
+	else:
+		for child in children:
+			# Go until the next controller is found.
+			if to_next_control and 'CON' in str(child):
+				return end_joint
+			if isinstance(child, Joint) and 'END' not in str(child):
+				end_joint = child
+				end_joint = find_end_joint(child, end_joint, end_control)
+			else:
+				end_joint = find_end_joint(child, end_joint, end_control)
+	return end_joint
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
@@ -418,9 +441,13 @@ def create_dynamic_chain():
 	
 	"""
 	global USING_ALL_CONTROLS
+	global LINK_TO_JOINTS
 	# List of controls
-	controls = []	
-	
+	controls = []
+	# Joint Control connections
+	control_mapper = {}
+	if checkBoxGrp('linkToJoints',q=1,value1=1):
+		LINK_TO_JOINTS = True
 	# Get the selection of controls
 	sel = ls(selection=True)
 	# Nothing was selected	
@@ -431,32 +458,20 @@ def create_dynamic_chain():
 	elif len(sel) > 2:
 		USING_ALL_CONTROLS = True
 		controls = sel
-		for control in controls:
-			get_joints_under_controls(control, joint_names, jointPos)
+		#for control in controls:
+			#get_joints_under_controls(control, joint_names, jointPos)
 	# Only one control was selected.  Check if that has two joints to create a chain
 	elif len(sel) == 1:
 		if not isinstance(sel[0], Joint):
 			controls.append(sel[0])
-			base_children =  sel[0].getChildren()
-			for child in base_children:
-				if isinstance(child, Joint) and child.getChildren() != []:
-					base_children.extend(child.getChildren())
-			ctrl_joints = [node for node in base_children if isinstance(node, Joint)]
-			if len(ctrl_joints) != 2:
+			baseJoint = [item for item in sel[0].getChildren() if isinstance(item, Joint)][0]
+			endJoint = find_end_joint(sel[0], to_next_control=True)
+			if endJoint == '':
 				warning("Only one controller selected with one joint attached.")
-			else:
-				baseJoint = ctrl_joints[0]
-				endJoint = ctrl_joints[1]
+				return
 		else:
 			warning("Only a single joint selected.  Need a base joint and end joint.")
 			return
-	# Check if select all controls is checked
-	#if checkBoxGrp('selectAllControls', q=1, value1=1):
-		#USING_ALL_CONTROLS = True
-	#if USING_ALL_CONTROLS: 
-		#controls = sel
-		#for control in controls:
-			#get_joints_under_controls(control, joint_names, jointPos)
 	else:
 		# There may only be a two joint set or controllers set
 		# XXX user should be able to select one controller with 2 joints attached
@@ -475,9 +490,10 @@ def create_dynamic_chain():
 		else:
 			baseJoint = base_ctrl
 	
-		if not isinstance(end_ctrl, Joint):	
-			end_children = end_ctrl.getChildren()
-			endJoint = [node for node in end_children if isinstance(node, Joint)][0]
+		if not isinstance(end_ctrl, Joint):
+			endJoint = find_end_joint(end_ctrl, to_next_control=True)
+			#end_children = end_ctrl.getChildren()
+			#endJoint = [node for node in end_children if isinstance(node, Joint)][0]
 		else:
 			endJoint = end_ctrl
 
@@ -680,7 +696,10 @@ def create_dynamic_chain():
 	addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 	# Constrain the dynamic chain to the joint
 	#constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
-	constraint_weights = constrain_joints(controls, joint_list, blend_joints)
+	if LINK_TO_JOINTS:
+		constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
+	else:
+		constraint_weights = constrain_joints(controls, joint_list, blend_joints)
 
 	# For each constraint that was created, link that to a reverse
 	reverse_nodes = []
@@ -739,6 +758,7 @@ def create_dynamic_chain():
 	select(jointCtrlObj)
 	
 	USING_ALL_CONTROLS = False
+	LINK_TO_JOINTS = False
 	displayInfo("Dynamic joint chain successfully setup!\n")
 		
 #///////////////////////////////////////////////////////////////////////////////////////
@@ -1151,6 +1171,8 @@ def main():
 	separator(h=20,w=330)
 	checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
 	checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
+	checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Joints cannot be locked*: ")
+	intField('jointsPerControl', value = 1)
 	checkBoxGrp('selectAllControls', cw=(1, 200), label = "Check if controls are non-hierarchy: ")
 	#separator -h 20  -w 330;
 	setParent('..')
