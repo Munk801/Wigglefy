@@ -60,7 +60,6 @@ BLND_SUFFIX = '_BLND'
 USING_ALL_CONTROLS = False
 HAS_TIP_CONSTRAINT = False
 ALLOW_CHAIN_STRETCH = False
-LINK_TO_JOINTS = False
 
 
 #---------------------------------------------------------------------------------#
@@ -167,7 +166,7 @@ def connect_controller_to_system(ctrl, system, attrs):
 		        f=True
 		)
 
-def constrain_joints(joint_names, joint_list, blend_joints):
+def constrain_joints(joint_names, joint_list, blend_joints, joints_per_control):
 	""" Constrains the original joints to the dynamic joints and
 	the blended joints.  Does a parent and scale constrain to the original joints
 	Args:
@@ -181,12 +180,11 @@ def constrain_joints(joint_names, joint_list, blend_joints):
 	"""
 	constraint_weights = []
 	# In the instance that there are more controls than joints, use the same controller
-	joints_per_control = int(intField('jointsPerControl',query=1,value=1))
 	constrainer = []
 	if len(joint_names) < len(joint_list):
-		for joint in joint_names:
-			for joint_instance in range(joints_per_control):
-				constrainer.append(joint)
+		for i, num_joints in enumerate(joints_per_control):
+			for joint_instance in range(num_joints):
+				constrainer.append(joint_names[i])
 	else:
 		constrainer = joint_names
 	constrainer.append(joint_names[-1])
@@ -272,15 +270,20 @@ def get_joint_info(currentJoint, endJoint, controls):
 	"""
 	joint_names = []
 	jointPos = []
+	joints_per_control = [0]
+	count = 0;
 	while currentJoint != endJoint:
 		joint_names.append(currentJoint)
 		jointPos.append(joint(currentJoint, q=1, p=1, a=1))
+		joints_per_control[count] += 1
 		pickWalk(d='down')
 		sel = ls(selection=True)
 		child = sel[0]
 		while not isinstance(child, Joint):
 			if isinstance(child, Transform) and 'CON' in str(child):
 				controls.append(child)
+				count += 1
+				joints_per_control.append(0)
 			prev_sel = child
 			pickWalk(d='down')
 			sel = ls(selection=True)
@@ -303,7 +306,7 @@ def get_joint_info(currentJoint, endJoint, controls):
 	currentJoint=sel[0]
 	joint_names.append(currentJoint)
 	jointPos.append(joint(currentJoint, q=1,p=1,a=1))
-	return joint_names, jointPos
+	return joint_names, jointPos, joints_per_control
 
 def lock_and_hide_attr(jointCtrlObj):
 	""" Lock the attribute and hide it from the menu.
@@ -424,13 +427,13 @@ def find_end_joint(start_control, end_joint= '', to_next_control=False):
 	else:
 		for child in children:
 			# Go until the next controller is found.
-			if to_next_control and 'CON' in str(child):
+			if to_next_control and str(child).endswith('CON'):
 				return end_joint
 			if isinstance(child, Joint) and 'END' not in str(child):
 				end_joint = child
-				end_joint = find_end_joint(child, end_joint, end_control)
+				end_joint = find_end_joint(child, end_joint, to_next_control)
 			else:
-				end_joint = find_end_joint(child, end_joint, end_control)
+				end_joint = find_end_joint(child, end_joint, to_next_control)
 	return end_joint
 #---------------------------------------------------------------------------------#
 # Main Functions
@@ -441,13 +444,10 @@ def create_dynamic_chain():
 	
 	"""
 	global USING_ALL_CONTROLS
-	global LINK_TO_JOINTS
 	# List of controls
 	controls = []
 	# Joint Control connections
 	control_mapper = {}
-	if checkBoxGrp('linkToJoints',q=1,value1=1):
-		LINK_TO_JOINTS = True
 	# Get the selection of controls
 	sel = ls(selection=True)
 	# Nothing was selected	
@@ -505,10 +505,12 @@ def create_dynamic_chain():
 	joint_names = []
 	joint_list = []
 	jointPos = []
+	joints_per_control = []
 	#Check to ensure proper selection
 	if USING_ALL_CONTROLS: 
 		for control in controls:
 			get_joints_under_controls(control, joint_names, jointPos)
+		joints_per_control = [1 for control in controls]
 	#if not ((objectType(baseJoint, isType="joint")) and 
 	        #(objectType(endJoint, isType="joint"))):
 		#mel.warning("Please select a base and tip joint to make dynamic.")
@@ -516,7 +518,7 @@ def create_dynamic_chain():
 		#String variable to house current joint being queried in the while loop.
 		currentJoint=baseJoint
 		select(baseJoint)
-		joint_names, jointPos = get_joint_info(currentJoint, endJoint, controls)
+		joint_names, jointPos, joints_per_control = get_joint_info(currentJoint, endJoint, controls)
 	# Create the list of joints to be parent constrained to the FK joints
 	joint_list = []
 	blend_joints = []
@@ -588,6 +590,7 @@ def create_dynamic_chain():
 	        'baseControl' : controls[0],
 	        'endControl' : controls[-1],
 	        'allControls' : ','.join([str(control) for control in controls]),
+	        'allDynJoints' : ','.join([str(joint) for joint in joint_list]),
 	}
 	if nameOfHairConstraint:
 		obj_names['nameOfTipConstraint'] = nameOfHairConstraint[0]
@@ -657,6 +660,8 @@ def create_dynamic_chain():
 	select(nameOfFollicle[0])
 	pickWalk(d='up')
 	follicleGrpNode=pickWalk(d='up')
+	follicleGrpNode = rename(follicleGrpNode, "{0}_FollicleSystem".format(baseJoint))
+	add_name_to_attr(jointCtrlObj, {'nameOfFollicleSystem' : follicleGrpNode})
 	#Determine parent of base joint
 	select(baseJoint)
 	parentOfBaseJoint=pickWalk(d='up')
@@ -681,7 +686,7 @@ def create_dynamic_chain():
 	items_to_hide = [
                 nameOfDynCurve,
                 nameOfIKHandle[0],
-                follicleGrpNode[0],
+                follicleGrpNode,
                 nameOfHairSystem,
         ]
 	change_visibility(items_to_hide, visibility=False)
@@ -696,10 +701,7 @@ def create_dynamic_chain():
 	addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 	# Constrain the dynamic chain to the joint
 	#constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
-	if LINK_TO_JOINTS:
-		constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
-	else:
-		constraint_weights = constrain_joints(controls, joint_list, blend_joints)
+	constraint_weights = constrain_joints(controls, joint_list, blend_joints, joints_per_control)
 
 	# For each constraint that was created, link that to a reverse
 	reverse_nodes = []
@@ -707,11 +709,18 @@ def create_dynamic_chain():
 		reverse_node = createNode('reverse')
 		reverse_nodes.append(reverse_node)
 		attr_list = p_constraint.listAttr()
-		in_attr = [attr for attr in attr_list if '{0}W'.format(DYN_SUFFIX) in str(attr)][0]
-		out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)][0]
-		connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
-		connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
-		connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)
+		#in_attr = [attr for attr in attr_list if '{0}W'.format(DYN_SUFFIX) in str(attr)][0]
+		#out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)][0]
+		#connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
+		#connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
+		#connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)		
+		in_attr = [attr for attr in attr_list if '{0}W'.format(DYN_SUFFIX) in str(attr)]
+		out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)]
+		for i, attr in enumerate(in_attr):
+			connectAttr(in_attr[i], "{0}.inputX".format(str(reverse_node)), f=True)
+			connectAttr("{0}.outputX".format(str(reverse_node)), out_attr[i], f=True)
+			connectAttr("{0}.blend".format(jointCtrlObj), in_attr[i], f=True)
+
 	
 	# Duplicate controls and attach to blend joints
 	all_nodes = []
@@ -727,24 +736,25 @@ def create_dynamic_chain():
 		for dup_ctrl in duplicate_controls:
 			all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
 			parent(dup_ctrl, new_ctrl_group)
-	else:	
-		first_control = str(controls[0])
-		new_control = duplicate(first_control, renameChildren=True)[0]
-		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
-		parent(new_control, new_ctrl_group)
+	#else:	
+		#first_control = str(controls[0])
+		#new_control = duplicate(first_control, renameChildren=True)[0]
+		#all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
+		#parent(new_control, new_ctrl_group)
 	# Add this to keep track in case of deletion
-	add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
+	#add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
 	#parent(new_control, world=True)
 	select(deselect=True)
 	# Create a new group
 	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
 	# Parent all the controls to new group
-	parent(blend_joints[0], dynamic_group)
-	parent(joint_list[0], dynamic_group)
+	parent(blend_joints[0], follicleGrpNode)
+	parent(joint_list[0], follicleGrpNode)
 	#parent(new_control, dynamic_group)
 	parent(new_ctrl_group, dynamic_group)
 	parent(baseJoint + "DynChainGroup", dynamic_group)
-	parent(dynamic_group, controls[0].getParent())
+	#parent(dynamic_group, controls[0].getParent())
+	parent(follicleGrpNode, controls[0].getParent())
 	
 	# Turn off visibility on new controls
 	addAttr(jointCtrlObj, ln="blendCtrlVis", at='bool', keyable=True)
@@ -758,7 +768,6 @@ def create_dynamic_chain():
 	select(jointCtrlObj)
 	
 	USING_ALL_CONTROLS = False
-	LINK_TO_JOINTS = False
 	displayInfo("Dynamic joint chain successfully setup!\n")
 		
 #///////////////////////////////////////////////////////////////////////////////////////
@@ -902,18 +911,21 @@ def bake_dynamic_chain():
 		progressWindow(edit=1,status=("Baking chain " + str(j) + " of " + str(i) + " :"))
 		j+=1
 		chainCtrl = str(obj)
-		baseJoint = str(getAttr(chainCtrl + ".baseJoint"))
-		endJoint = str(getAttr(chainCtrl + ".endJoint"))
-		bakingJoints = "{\""
-		currentJoint = [endJoint]
-		#Determine joints to be baked
-		while currentJoint[0] != baseJoint:
-			bakingJoints=(bakingJoints + currentJoint[0] + "\", \"")
-			select(currentJoint[0])
-			currentJoint=pickWalk(d='up')
-			
-		
-		bakingJoints=(bakingJoints + baseJoint + "\"}")
+		#baseJoint = str(getAttr(chainCtrl + ".linkedBaseJoint"))
+		#endJoint = str(getAttr(chainCtrl + ".linkedEndJoint"))
+		bakingJoints = "{"
+		#currentJoint = [endJoint]
+		##Determine joints to be baked
+		#while currentJoint[0] != baseJoint:
+			#bakingJoints=(bakingJoints + currentJoint[0] + "\", \"")
+			#select(currentJoint[0])
+			#currentJoint=pickWalk(d='up')
+		all_dyn_joints = getAttr(chainCtrl + ".allDynJoints")
+		all_dyn_joints = all_dyn_joints.split(',')
+		for joint in all_dyn_joints:
+			bakingJoints = (bakingJoints + "\"" + joint + "\", ")	
+		bakingJoints = bakingJoints.rstrip(', ')
+		bakingJoints=(bakingJoints + "}")
 		#Add the base joint that the while loop will miss
 		#Concatenate the bake simulation command with the necessary joint names.
 		bakingJoints=(
@@ -937,65 +949,66 @@ def bake_dynamic_chain():
 def delete_dynamic_chain():
 	initialSel=mc.ls(selection=True)
 	#Declare necessary variables
-	chainCtrl=initialSel[0]
+	chainCtrls=initialSel
 	error=0
-	#Check that controller is selected.
-	if not mel.attributeExists("bakingState", chainCtrl):
-		error=1
-		mel.warning("Please select a chain controller. No dynamics were deleted.")
-	
-	elif ((getAttr(chainCtrl + ".bakingState")) == 0) and ((getAttr(chainCtrl + ".isStretchy")) == 1):
-		result=str(confirmDialog(title="Delete Dynamics Warning",
-			cancelButton="Cancel",
-			defaultButton="Cancel",
-			button=["Continue Anyway", 
-				"Cancel"],
-			message="Deleting the dynamics on a stretchy chain may cause it to collapse. Please bake the joint chain before deleting.",
-			dismissString="Cancel"))
-		#Check if joints have been baked.
-		if result == "Cancel":
+	for chainCtrl in chainCtrls:
+		#Check that controller is selected.
+		if not mel.attributeExists("bakingState", chainCtrl):
 			error=1
-			mel.warning("Dynamics were not deleted for " + chainCtrl)
+			mel.warning("Please select a chain controller. No dynamics were deleted.")
 		
-	if error == 0:
-		#Delete Hair System Node
-		hairSystemName = str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
-		select(hairSystemName)
-		hairSystemName=pickWalk(d='up')
-		delete(hairSystemName)
-		#Delete Follicle Node
-		follicleNode = str(getAttr(chainCtrl + ".nameOfFollicleNode"))
-		select(follicleNode)
-		follicleNode=pickWalk(d='up')
-		delete(follicleNode)
-		#Delete Dynamic Hair Curve
-		delete(getAttr(chainCtrl + ".nameOfDynCurve"))
-		#Delete Tip Constraint
-		try:
-			delete(getAttr(chainCtrl + ".nameOfTipConstraint"))
-		except pymel.core.general.MayaAttributeError, pymel.core.general.MayaNodeError:
-			pass
-		try:
-			delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
-		except Exception:
-			pass
-		
-		# Delete the IK Handle attached
-		baseJoint=str(getAttr(chainCtrl + ".baseJoint"))
-		delete(baseJoint + "ikHandle")
-		
-		# Delete the dynamic joints involved	
-		delete(baseJoint)
-		
-		# Delete blend joints and controls	
-		blend_controls = str(getAttr(chainCtrl + ".blendControl"))
-		delete(blend_controls)
-		
-		#Delete control object
-		select(chainCtrl)
-		group = pickWalk(d='up')
-		delete(group)
-		
+		elif ((getAttr(chainCtrl + ".bakingState")) == 0) and ((getAttr(chainCtrl + ".isStretchy")) == 1):
+			result=str(confirmDialog(title="Delete Dynamics Warning",
+				cancelButton="Cancel",
+				defaultButton="Cancel",
+				button=["Continue Anyway", 
+				        "Cancel"],
+				message="Deleting the dynamics on a stretchy chain may cause it to collapse. Please bake the joint chain before deleting.",
+				dismissString="Cancel"))
+			#Check if joints have been baked.
+			if result == "Cancel":
+				error=1
+				mel.warning("Dynamics were not deleted for " + chainCtrl)
+			
+		if error == 0:
+			#Delete Hair System Node
+			hairSystemName = str(getAttr(chainCtrl + ".nameOfHairShapeNode"))
+			select(hairSystemName)
+			hairSystemName=pickWalk(d='up')
+			delete(hairSystemName)
+			#Delete Follicle Node
+			follicleNode = str(getAttr(chainCtrl + ".nameOfFollicleNode"))
+			select(follicleNode)
+			follicleNode=pickWalk(d='up')
+			delete(follicleNode)
+			#Delete Dynamic Hair Curve
+			delete(getAttr(chainCtrl + ".nameOfDynCurve"))
+			#Delete Tip Constraint
+			try:
+				delete(getAttr(chainCtrl + ".nameOfTipConstraint"))
+			except pymel.core.general.MayaAttributeError, pymel.core.general.MayaNodeError:
+				pass
+			try:
+				delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
+			except Exception:
+				pass
+			
+			# Delete the IK Handle attached
+			baseJoint=str(getAttr(chainCtrl + ".baseJoint"))
+			delete(baseJoint + "ikHandle")
+			
+			# Delete the dynamic joints involved	
+			delete(baseJoint)
+			
+			# Delete blend joints and controls	
+			#blend_controls = str(getAttr(chainCtrl + ".blendControl"))
+			#delete(blend_controls)
+			
+			#Delete control object
+			select(chainCtrl)
+			group = pickWalk(d='up')
+			delete(group)
+			
 		#Print feedback to the user.
 		print "Dynamics have been deleted from the chain.\n"
 		
@@ -1122,6 +1135,7 @@ def save_character_to_prefs():
 	xml_utils.indent(root)
 	tree = xml_utils.ElementTree.ElementTree(root)
 	tree.write(str(item[0]))
+	warning('{0} has been written.'.format(str(item[0])))
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
@@ -1147,7 +1161,7 @@ def main():
 	floatSliderGrp('sliderStiffness',min=0,max=1,
 		cw3=(60, 60, 60),
 		precision=3,
-		value=0.001,
+		value=0.6,
 		label="Stiffness:",
 		field=True,
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
@@ -1155,7 +1169,7 @@ def main():
 	floatSliderGrp('sliderDamping',min=0,max=100,
 		cw3=(60, 60, 60),
 		precision=3,
-		value=0.05,
+		value=10,
 		label="Damping:",
 		field=True,
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
@@ -1163,7 +1177,7 @@ def main():
 	floatSliderGrp('sliderDrag',min=0,max=1,
 		cw3=(60, 60, 60),
 		precision=3,
-		value=0.0,
+		value=.5,
 		label="Drag:",
 		field=True,
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
@@ -1172,7 +1186,6 @@ def main():
 	checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
 	checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
 	checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Joints cannot be locked*: ")
-	intField('jointsPerControl', value = 1)
 	checkBoxGrp('selectAllControls', cw=(1, 200), label = "Check if controls are non-hierarchy: ")
 	#separator -h 20  -w 330;
 	setParent('..')
