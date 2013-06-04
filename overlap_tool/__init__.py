@@ -57,6 +57,8 @@ DYN_CONTROLLER_SIZE = 5
 DYN_SUFFIX = '_DYN'
 BLND_SUFFIX = '_BLND'
 
+ITERATIONS = 10
+
 USING_ALL_CONTROLS = False
 HAS_TIP_CONSTRAINT = False
 ALLOW_CHAIN_STRETCH = False
@@ -76,6 +78,8 @@ def add_dynamic_attributes(jointCtrlObj):
 	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=DYN_STIFFNESS)
 	#addAttr(jointCtrlObj,
         #        min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
+	addAttr(jointCtrlObj,
+	        min = 0, ln = 'iterations', max = 10000, keyable = True, at='double', dv=ITERATIONS)
 	addAttr(jointCtrlObj,
                 min=0,ln='damping',max=100,keyable=True,at='double',dv=DYN_DAMPING)
 	addAttr(jointCtrlObj,
@@ -421,6 +425,11 @@ def get_joints_under_controls(control, joint_names, jointPos):
 	return
 
 def find_end_joint(start_control, end_joint= '', to_next_control=False):
+	""" Find an end joint given a start controller position. This will
+	continue down the chain to find the last joint.  If to_next_control
+	is set to True,  it will stop at the next available controller.
+	
+	"""
 	children = start_control.getChildren()
 	if not children:
 		return end_joint
@@ -458,8 +467,6 @@ def create_dynamic_chain():
 	elif len(sel) > 2:
 		USING_ALL_CONTROLS = True
 		controls = sel
-		#for control in controls:
-			#get_joints_under_controls(control, joint_names, jointPos)
 	# Only one control was selected.  Check if that has two joints to create a chain
 	elif len(sel) == 1:
 		if not isinstance(sel[0], Joint):
@@ -497,23 +504,24 @@ def create_dynamic_chain():
 		else:
 			endJoint = end_ctrl
 
-	sel=mc.ls(selection=True)
-	#Create a vector array to store the world space coordinates of the joints.
-	jointPos=[]
-	#Counter integer used in the while loop to determine the proper index in the vector array.
-	counter=0
-	joint_names = []
-	joint_list = []
+	sel = mc.ls(selection=True)
+	# Create a vector array to store the world space coordinates of the joints.
 	jointPos = []
+	# Counter integer used in the while loop to determine the proper index in the vector array.
+	counter = 0
+	# List of the dynamic joints the joint names
+	joint_names = []
+	# List of the dynamic joints
+	joint_list = []
+	# List of all the joint positions in as [x,y,z]	
+	jointPos = []
+	# In conjunction with the controls list, will state how many joints are set per control
 	joints_per_control = []
 	#Check to ensure proper selection
 	if USING_ALL_CONTROLS: 
 		for control in controls:
 			get_joints_under_controls(control, joint_names, jointPos)
 		joints_per_control = [1 for control in controls]
-	#if not ((objectType(baseJoint, isType="joint")) and 
-	        #(objectType(endJoint, isType="joint"))):
-		#mel.warning("Please select a base and tip joint to make dynamic.")
 	else:
 		#String variable to house current joint being queried in the while loop.
 		currentJoint=baseJoint
@@ -531,7 +539,6 @@ def create_dynamic_chain():
 	nameOfCurve = build_curve_from_joint(jointPos)	
 	#Make curve dynamic.
 	select(nameOfCurve)
-	#mel.makeCurvesDynamicHairs()
 	mm.eval('makeCurvesDynamicHairs false false true')
 	#Determine what the name of the dynamic curve is
 	#XXX Need a better way to get the curve name
@@ -631,6 +638,7 @@ def create_dynamic_chain():
                 'strength' : 'turbulenceStrength',
                 'frequency' : 'turbulenceFrequency',
                 'speed' : 'turbulenceSpeed',
+	        'iterations' : 'iterations',
         }
 	connect_controller_to_system(jointCtrlObj, nameOfHairSystem, ctrl_to_hairsystem_attrs)
 	
@@ -700,7 +708,6 @@ def create_dynamic_chain():
 	
 	addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 	# Constrain the dynamic chain to the joint
-	#constraint_weights = constrain_joints(joint_names, joint_list, blend_joints)
 	constraint_weights = constrain_joints(controls, joint_list, blend_joints, joints_per_control)
 
 	# For each constraint that was created, link that to a reverse
@@ -709,13 +716,10 @@ def create_dynamic_chain():
 		reverse_node = createNode('reverse')
 		reverse_nodes.append(reverse_node)
 		attr_list = p_constraint.listAttr()
-		#in_attr = [attr for attr in attr_list if '{0}W'.format(DYN_SUFFIX) in str(attr)][0]
-		#out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)][0]
-		#connectAttr(in_attr, "{0}.inputX".format(str(reverse_node)), f=True)
-		#connectAttr("{0}.outputX".format(str(reverse_node)), out_attr, f=True)
-		#connectAttr("{0}.blend".format(jointCtrlObj), in_attr, f=True)		
 		in_attr = [attr for attr in attr_list if '{0}W'.format(DYN_SUFFIX) in str(attr)]
 		out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)]
+		# Set up the reverse node to take the dynamic attr for the input and 
+		# blend attr for the output
 		for i, attr in enumerate(in_attr):
 			connectAttr(in_attr[i], "{0}.inputX".format(str(reverse_node)), f=True)
 			connectAttr("{0}.outputX".format(str(reverse_node)), out_attr[i], f=True)
@@ -750,7 +754,6 @@ def create_dynamic_chain():
 	# Parent all the controls to new group
 	parent(blend_joints[0], follicleGrpNode)
 	parent(joint_list[0], follicleGrpNode)
-	#parent(new_control, dynamic_group)
 	parent(new_ctrl_group, dynamic_group)
 	parent(baseJoint + "DynChainGroup", dynamic_group)
 	#parent(dynamic_group, controls[0].getParent())
@@ -992,13 +995,18 @@ def delete_dynamic_chain():
 				delete(getAttr(chainCtrl + ".nameOfMultiDivNode"))
 			except Exception:
 				pass
+			try:
+				delete(getAttr(chainCtrl + ".nameOfFollicleSystem"))
+			except Exception:
+				pass
+
 			
 			# Delete the IK Handle attached
 			baseJoint=str(getAttr(chainCtrl + ".baseJoint"))
-			delete(baseJoint + "ikHandle")
+			#delete(baseJoint + "ikHandle")
 			
 			# Delete the dynamic joints involved	
-			delete(baseJoint)
+			#delete(baseJoint)
 			
 			# Delete blend joints and controls	
 			#blend_controls = str(getAttr(chainCtrl + ".blendControl"))
@@ -1006,6 +1014,7 @@ def delete_dynamic_chain():
 			
 			#Delete control object
 			select(chainCtrl)
+			group = pickWalk(d='up')
 			group = pickWalk(d='up')
 			delete(group)
 			
@@ -1127,7 +1136,8 @@ def save_character_to_prefs():
 			'strength' : getAttr('{0}.strength'.format(ctrl)),
 			'frequency' : getAttr('{0}.frequency'.format(ctrl)),
 			'speed' : getAttr('{0}.speed'.format(ctrl)),
-			'blend' : getAttr('{0}.blend'.format(ctrl))
+			'blend' : getAttr('{0}.blend'.format(ctrl)),
+		        #'iterations' : getAttr('{0}.iterations'.format(ctrl))
 		}
 		attr_info.set('name', ctrl)
 		for attr_name, attr_val in attr_dict.iteritems():
