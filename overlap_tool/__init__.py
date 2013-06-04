@@ -238,21 +238,23 @@ def create_joints(joint_names, jointPos, joint_list, blend_joints):
 	                
 	"""                
 	select(deselect=True)
+	joint_instances = [get_instance_number(prefix="{0}_".format(joint_name), suffix=DYN_SUFFIX) for joint_name in joint_names]
 	for i, pos in enumerate(jointPos):
 		joint_list.append(
 	                joint(
 	                        p=(pos[0], pos[1], pos[2]), 
-	                        name='{0}{1}'.format(joint_names[i], DYN_SUFFIX)
+	                        name='{0}_{1}{2}'.format(joint_names[i], joint_instances[i], DYN_SUFFIX)
 	                )
 	        )
 
 	# Create the blend joints
 	select(deselect=True)
+	joint_instances = [get_instance_number(prefix="{0}_".format(joint_name), suffix=BLND_SUFFIX) for joint_name in joint_names]
 	for i, pos in enumerate(jointPos):
 		blend_joints.append(
 	                joint(
 	                        p=(pos[0], pos[1], pos[2]), 
-	                        name='{0}{1}'.format(joint_names[i], BLND_SUFFIX)
+	                        name='{0}_{1}{2}'.format(joint_names[i], joint_instances[i], BLND_SUFFIX)
 	                )
 	        )
 		
@@ -350,7 +352,7 @@ def replace_joint_nodes(base_node, all_nodes, blend_joints):
 			all_nodes = replace_joint_nodes(child, all_nodes, blend_joints)
 	return all_nodes
 
-def set_chain_attr_values(baseJoint):
+def set_chain_attr_values(jointCtrlObj):
 	""" Set the dynamics chain attrs from GUI values.
 	Args:
 		baseJoint - (str)
@@ -361,11 +363,11 @@ def set_chain_attr_values(baseJoint):
 	sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
 	sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
 	sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
-	setAttr((baseJoint + "DynChainControl.stiffness"),
+	setAttr((jointCtrlObj + ".stiffness"),
                 sliderStiffness)
-	setAttr((baseJoint + "DynChainControl.damping"),
+	setAttr((jointCtrlObj + ".damping"),
                 sliderDamping)
-	setAttr((baseJoint + "DynChainControl.drag"),
+	setAttr((jointCtrlObj + ".drag"),
                 sliderDrag)
 	
 def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
@@ -444,6 +446,12 @@ def find_end_joint(start_control, end_joint= '', to_next_control=False):
 			else:
 				end_joint = find_end_joint(child, end_joint, to_next_control)
 	return end_joint
+
+def get_instance_number(prefix='', instance=0, suffix=''):
+	while objExists("{0}{1}{2}".format(prefix, instance, suffix)):
+		instance += 1
+	return instance
+
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
@@ -652,13 +660,18 @@ def create_dynamic_chain():
 	
 	#Lock And Hide Attributes on Control Object.
 	lock_and_hide_attr(jointCtrlObj)
-	
+
+	#instance = 0
+	#while objExists("{0}DynChainControl{1}".format(baseJoint, instance)):
+		#instance += 1
+	ik_instance = get_instance_number("{0}ikHandle".format(baseJoint))
+
 	#Build the splineIK handle using the dynamic curve.
 	#select(baseJoint,endJoint,nameOfDynCurve)
 	select(joint_list[0], joint_list[-1], nameOfDynCurve)
 	nameOfIKHandle=ikHandle(ccv=False,sol='ikSplineSolver')
 	nameOfIKHandle[0]=str(rename(nameOfIKHandle[0],
-                (baseJoint + "ikHandle")))
+                (baseJoint + "ikHandle{0}".format(ik_instance))))
 
 	#Rename Ctrl Obj
 	jointCtrlObj=str(rename(jointCtrlObj,
@@ -681,7 +694,7 @@ def create_dynamic_chain():
 		parent(nameOfDynCurve, w=True)
 	
 	# Set dynamic chain attributes according to creation options
-	set_chain_attr_values(baseJoint)
+	set_chain_attr_values(jointCtrlObj)
 
 	# Group the dynamic chain nodes
 	nameOfGroup=str(group(jointCtrlObj,nameOfDynCurve,nameOfIKHandle[0],nameOfHairSystem,
@@ -704,7 +717,7 @@ def create_dynamic_chain():
 	nameOfGarbageGrp=pickWalk(d='up')
 	delete(nameOfGarbageGrp[0] + "OutputCurves")
 	# Select dynamic chain controller for user
-	select(baseJoint + "DynChainControl")
+	select(str(jointCtrlObj))
 	
 	addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 	# Constrain the dynamic chain to the joint
@@ -734,12 +747,12 @@ def create_dynamic_chain():
 	# If select all controls is checked, then we need every control.  Whereas if it is,
 	# not checked, we can assume that the controls are in a hierarchy structure.  Thus,
 	# getting the first control will grab the hierarchy for the entire control set
-	if USING_ALL_CONTROLS: 
-		duplicate_controls = [duplicate(str(control)) for control in controls]
-		new_control = duplicate_controls[0][0]
-		for dup_ctrl in duplicate_controls:
-			all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
-			parent(dup_ctrl, new_ctrl_group)
+	#if USING_ALL_CONTROLS: 
+		#duplicate_controls = [duplicate(str(control)) for control in controls]
+		#new_control = duplicate_controls[0][0]
+		#for dup_ctrl in duplicate_controls:
+			#all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
+			#parent(dup_ctrl, new_ctrl_group)
 	#else:	
 		#first_control = str(controls[0])
 		#new_control = duplicate(first_control, renameChildren=True)[0]
@@ -1058,6 +1071,15 @@ def enable_dynamics():
 	except AttributeError:
 		mel.warning("Cannot find IK handle attached to controller group")
 
+def delete_baked_frames():
+	""" Remove all baked frames form a controllers dynamic chains"""
+	chain_ctrls = ls(selection=True)
+	for chain_ctrl in chain_ctrls:
+		dyn_joints = getAttr('{0}.allDynJoints'.format(chain_ctrl))
+		for joint in dyn_joints.split(','):
+			cutKey(joint, clear = True)
+			
+			
 def create_character_from_prefs():
 	# XXX Doesn't do any error checking for names in xml file
 	# XXX Only does joints.  What about attrs?
@@ -1209,6 +1231,8 @@ def main():
 	button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
+	#text("Select control: ")
+	#button(c=lambda *args: overlap_tool.delete_baked_frames(), label = "Delete Baked Frames")
 	#text("Disable Dynamics: ")
 	#button(c=lambda *args: overlap_tool.disable_dynamics(), label="Disable Dynamics")
 	#text("Enable Dynamics: ")
