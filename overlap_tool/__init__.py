@@ -34,6 +34,7 @@ import maya.cmds as mc
 import maya.mel as mm
 import pymel
 from pymel.all import *
+from pymel.core.runtime import ClusterCurve
 
 # External
 import ani_tools.rmaya.ani_library as ani_lib
@@ -53,6 +54,7 @@ DYN_FREQUENCY = 0.2
 DYN_SPEED = 0.2
 DYN_BLEND = 1
 DYN_CONTROLLER_SIZE = 5
+MAGNETISM = 1
 
 DYN_SUFFIX = '_DYN'
 BLND_SUFFIX = '_BLND'
@@ -72,7 +74,7 @@ def add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints):
 	select(deselect=True)
 	all_nodes = []
 	new_control = ''
-	new_ctrl_group = group(name='{0}_BlendCtrlGroup'.format(str(jointCtrlObj)))
+	#new_ctrl_group = group(name='{0}_BlendCtrlGroup'.format(str(jointCtrlObj)))
 	# If select all controls is checked, then we need every control.  Whereas if it is,
 	# not checked, we can assume that the controls are in a hierarchy structure.  Thus,
 	# getting the first control will grab the hierarchy for the entire control set
@@ -81,23 +83,24 @@ def add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints):
 		new_control = duplicate_controls[0][0]
 		for dup_ctrl in duplicate_controls:
 			all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
-			parent(dup_ctrl, new_ctrl_group)
+			#parent(dup_ctrl, new_ctrl_group)
 	else:	
 		first_control = str(controls[0])
 		new_control = duplicate(first_control, renameChildren=True)[0]
 		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
-		parent(new_control, new_ctrl_group)
+		#parent(new_control, new_ctrl_group)
 	# Add this to keep track in case of deletion
 	add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
 	#parent(new_control, world=True)
 	
 	# Turn off visibility on new controls
 	addAttr(jointCtrlObj, ln="blendCtrlVis", at='bool', keyable=True)
-	connectAttr('{0}.blendCtrlVis'.format(jointCtrlObj),'{0}.visibility'.format(new_ctrl_group)) 
-	try:
-		setAttr("{0}.visibility".format(new_control), 0)
-	except RuntimeError as e:
-		displayInfo("Cannot set visibility for {0}".format(new_control))
+	#connectAttr('{0}.blendCtrlVis'.format(jointCtrlObj),'{0}.visibility'.format(new_ctrl_group)) 
+	#try:
+		#setAttr("{0}.visibility".format(new_control), 0)
+	#except RuntimeError as e:
+		#displayInfo("Cannot set visibility for {0}".format(new_control))
+	return all_nodes
 
 def add_dynamic_attributes(jointCtrlObj):
 	""" Add all the attributes to the controller.
@@ -132,6 +135,8 @@ def add_dynamic_attributes(jointCtrlObj):
                 min=0,ln="speed",max=2,keyable=True,at='double',dv=DYN_SPEED)
 	addAttr(jointCtrlObj,
 	        min=0, ln="blend",max=1,keyable=True,at='double',dv=DYN_BLEND)
+	addAttr(jointCtrlObj,
+	        min=0, ln="magnetism", max=1, keyable=True, at='double', dv=MAGNETISM)
 
 def add_name_to_attr(jointCtrlObj, obj_names):
 	""" Add specified names to the attributes.
@@ -144,6 +149,17 @@ def add_name_to_attr(jointCtrlObj, obj_names):
 	for name, obj in obj_names.iteritems():
 		addAttr(jointCtrlObj, ln=name, dt="string", keyable=True)
 		setAttr('{ctrl}.{name}'.format(ctrl=jointCtrlObj, name=name), obj, lock=True, type="string")
+
+def build_clusters_from_curve(nameOfCurve, numJoints):
+	select(nameOfCurve)
+	ClusterCurve()
+	last_cluster = ls(selection=True)[0]
+	last_num = int(str(last_cluster).lstrip('cluster').rstrip('Handle'))
+	clusters = ["cluster{0}Handle".format(i) for i in range(last_num - numJoints + 1, last_num + 1)]
+	# Hide all the clusters
+	change_visibility(clusters, 0)
+	return clusters
+
 
 def build_curve_from_joint(jointPos):
 	""" Build the curve from the joint positions.
@@ -222,7 +238,7 @@ def constrain_joints(joint_names, joint_list, blend_joints, joints_per_control):
 				constrainer.append(joint_names[i])
 	else:
 		constrainer = joint_names
-	constrainer.append(joint_names[-1])
+	#constrainer.append(joint_names[-1])
 	for i, cur_joint in enumerate(joint_list):
 		try:
 			scaleConstraint(cur_joint, constrainer[i])
@@ -676,7 +692,8 @@ def create_dynamic_chain():
 	#Connect attributes on the controller sphere to the follicle node
 	ctrl_to_follicle_attrs = {
                 'stiffness' : 'stiffness',
-                'damping' : 'damp'
+                'damping' : 'damp',
+	        'magnetism' : 'startCurveAttract',
         }
 	connect_controller_to_system(jointCtrlObj, nameOfFollicle[0], ctrl_to_follicle_attrs)
 
@@ -785,8 +802,19 @@ def create_dynamic_chain():
 			        min=0, ln=blendname,max=1,keyable=True,at='double',dv=1.0)
 			connectAttr("{0}.blend{1}".format(jointCtrlObj, i), in_attr[j], f=True)
 
-			
-	add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints)
+	dupe_nodes = add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints)
+	dupe_controls = []
+	for node in dupe_nodes:
+		if len(dupe_controls) < len(controls) and str(node).endswith('CON'):
+			dupe_controls.append(node)
+
+	# Build Clusters from curve
+	clusters = build_clusters_from_curve(nameOfDynCurve, len(jointPos))
+	
+	# Constrain the clusters to the duplicate controls
+	for i, dupe_control in enumerate(dupe_controls):
+		scaleConstraint(dupe_control, clusters[i])
+		parentConstraint(dupe_control, clusters[i])
 	select(deselect=True)
 	# Create a new group
 	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
@@ -795,7 +823,11 @@ def create_dynamic_chain():
 	parent(joint_list[0], follicleGrpNode)
 	parent(baseJoint + "DynChainGroup", dynamic_group)
 	#parent(dynamic_group, controls[0].getParent())
-	parent(follicleGrpNode, controls[0].getParent())
+	parent(follicleGrpNode, controls[0].root())
+	#parent(clusters, follicleGrpNode)
+	
+	# Hide original controllers visiblity
+	#change_visibility(controls, 0)
 	
 	# Print feedback for user
 	select(jointCtrlObj)
