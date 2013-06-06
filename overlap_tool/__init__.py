@@ -67,6 +67,37 @@ ALLOW_CHAIN_STRETCH = False
 #---------------------------------------------------------------------------------#
 # Helper Functions 
 #---------------------------------------------------------------------------------#
+def add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints):
+	# Duplicate controls and attach to blend joints
+	select(deselect=True)
+	all_nodes = []
+	new_control = ''
+	new_ctrl_group = group(name='{0}_BlendCtrlGroup'.format(str(jointCtrlObj)))
+	# If select all controls is checked, then we need every control.  Whereas if it is,
+	# not checked, we can assume that the controls are in a hierarchy structure.  Thus,
+	# getting the first control will grab the hierarchy for the entire control set
+	if USING_ALL_CONTROLS: 
+		duplicate_controls = [duplicate(str(control)) for control in controls]
+		new_control = duplicate_controls[0][0]
+		for dup_ctrl in duplicate_controls:
+			all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
+			parent(dup_ctrl, new_ctrl_group)
+	else:	
+		first_control = str(controls[0])
+		new_control = duplicate(first_control, renameChildren=True)[0]
+		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
+		parent(new_control, new_ctrl_group)
+	# Add this to keep track in case of deletion
+	add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
+	#parent(new_control, world=True)
+	
+	# Turn off visibility on new controls
+	addAttr(jointCtrlObj, ln="blendCtrlVis", at='bool', keyable=True)
+	connectAttr('{0}.blendCtrlVis'.format(jointCtrlObj),'{0}.visibility'.format(new_ctrl_group)) 
+	try:
+		setAttr("{0}.visibility".format(new_control), 0)
+	except RuntimeError as e:
+		displayInfo("Cannot set visibility for {0}".format(new_control))
 
 def add_dynamic_attributes(jointCtrlObj):
 	""" Add all the attributes to the controller.
@@ -238,7 +269,13 @@ def create_joints(joint_names, jointPos, joint_list, blend_joints):
 	                
 	"""                
 	select(deselect=True)
-	joint_instances = [get_instance_number(prefix="{0}_".format(joint_name), suffix=DYN_SUFFIX) for joint_name in joint_names]
+	# Get the instance number of each joint.  Some joints may have different instance numbers
+	joint_instances = [
+	        get_instance_number(
+	                prefix="{0}_".format(joint_name), 
+	                suffix=DYN_SUFFIX
+	        ) for joint_name in joint_names
+	]
 	for i, pos in enumerate(jointPos):
 		joint_list.append(
 	                joint(
@@ -249,7 +286,12 @@ def create_joints(joint_names, jointPos, joint_list, blend_joints):
 
 	# Create the blend joints
 	select(deselect=True)
-	joint_instances = [get_instance_number(prefix="{0}_".format(joint_name), suffix=BLND_SUFFIX) for joint_name in joint_names]
+	joint_instances = [
+	        get_instance_number(
+	                prefix="{0}_".format(joint_name), 
+	                suffix=BLND_SUFFIX
+	        ) for joint_name in joint_names
+	]
 	for i, pos in enumerate(jointPos):
 		blend_joints.append(
 	                joint(
@@ -660,10 +702,8 @@ def create_dynamic_chain():
 	
 	#Lock And Hide Attributes on Control Object.
 	lock_and_hide_attr(jointCtrlObj)
-
-	#instance = 0
-	#while objExists("{0}DynChainControl{1}".format(baseJoint, instance)):
-		#instance += 1
+	
+	# Get the instance of the ikHandle
 	ik_instance = get_instance_number("{0}ikHandle".format(baseJoint))
 
 	#Build the splineIK handle using the dynamic curve.
@@ -674,8 +714,7 @@ def create_dynamic_chain():
                 (baseJoint + "ikHandle{0}".format(ik_instance))))
 
 	#Rename Ctrl Obj
-	jointCtrlObj=str(rename(jointCtrlObj,
-                (baseJoint + "DynChainControl")))
+	jointCtrlObj=str(rename(jointCtrlObj, (baseJoint + "DynChainControl")))
 	#Parent follicle node to the parent of the base joint
 	#This will attach the joint chain to the rest of the heirarchy if there is one.
 	select(nameOfFollicle[0])
@@ -699,7 +738,7 @@ def create_dynamic_chain():
 	# Group the dynamic chain nodes
 	nameOfGroup=str(group(jointCtrlObj,nameOfDynCurve,nameOfIKHandle[0],nameOfHairSystem,
                 name=(baseJoint + "DynChainGroup")))
-	# If the chain has a tip constraint, then parent this under the main group to keep things tidy.
+	# If the chain has a tip constraint, then parent this under the main group
 	if checkBoxGrp('tipConstraintCheckbox',q=1,value1=1):
 		parent(nameOfHairConstraint[0],nameOfGroup)
 		
@@ -721,7 +760,12 @@ def create_dynamic_chain():
 	
 	addAttr(jointCtrlObj, ln='enableDynamics', at='bool')
 	# Constrain the dynamic chain to the joint
-	constraint_weights = constrain_joints(controls, joint_list, blend_joints, joints_per_control)
+	constraint_weights = constrain_joints(
+	        controls, 
+	        joint_list, 
+	        blend_joints, 
+	        joints_per_control
+	)
 
 	# For each constraint that was created, link that to a reverse
 	reverse_nodes = []
@@ -733,52 +777,25 @@ def create_dynamic_chain():
 		out_attr = [attr for attr in attr_list if '{0}W'.format(BLND_SUFFIX) in str(attr)]
 		# Set up the reverse node to take the dynamic attr for the input and 
 		# blend attr for the output
-		for i, attr in enumerate(in_attr):
-			connectAttr(in_attr[i], "{0}.inputX".format(str(reverse_node)), f=True)
-			connectAttr("{0}.outputX".format(str(reverse_node)), out_attr[i], f=True)
-			connectAttr("{0}.blend".format(jointCtrlObj), in_attr[i], f=True)
+		for j, attr in enumerate(in_attr):
+			connectAttr(in_attr[j], "{0}.inputX".format(str(reverse_node)), f=True)
+			connectAttr("{0}.outputX".format(str(reverse_node)), out_attr[j], f=True)
+			blendname = "blend{0}".format(i)
+			addAttr(jointCtrlObj, 
+			        min=0, ln=blendname,max=1,keyable=True,at='double',dv=1.0)
+			connectAttr("{0}.blend{1}".format(jointCtrlObj, i), in_attr[j], f=True)
 
-	
-	# Duplicate controls and attach to blend joints
-	all_nodes = []
-	new_control = ''
-	select(deselect=True)
-	new_ctrl_group = group(name='{0}_BlendCtrlGroup'.format(str(jointCtrlObj)))
-	# If select all controls is checked, then we need every control.  Whereas if it is,
-	# not checked, we can assume that the controls are in a hierarchy structure.  Thus,
-	# getting the first control will grab the hierarchy for the entire control set
-	#if USING_ALL_CONTROLS: 
-		#duplicate_controls = [duplicate(str(control)) for control in controls]
-		#new_control = duplicate_controls[0][0]
-		#for dup_ctrl in duplicate_controls:
-			#all_nodes = replace_joint_nodes(dup_ctrl[0], all_nodes, blend_joints)
-			#parent(dup_ctrl, new_ctrl_group)
-	#else:	
-		#first_control = str(controls[0])
-		#new_control = duplicate(first_control, renameChildren=True)[0]
-		#all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
-		#parent(new_control, new_ctrl_group)
-	# Add this to keep track in case of deletion
-	#add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
-	#parent(new_control, world=True)
+			
+	add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints)
 	select(deselect=True)
 	# Create a new group
 	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
 	# Parent all the controls to new group
 	parent(blend_joints[0], follicleGrpNode)
 	parent(joint_list[0], follicleGrpNode)
-	parent(new_ctrl_group, dynamic_group)
 	parent(baseJoint + "DynChainGroup", dynamic_group)
 	#parent(dynamic_group, controls[0].getParent())
 	parent(follicleGrpNode, controls[0].getParent())
-	
-	# Turn off visibility on new controls
-	addAttr(jointCtrlObj, ln="blendCtrlVis", at='bool', keyable=True)
-	connectAttr('{0}.blendCtrlVis'.format(jointCtrlObj),'{0}.visibility'.format(new_ctrl_group)) 
-	try:
-		setAttr("{0}.visibility".format(new_control), 0)
-	except RuntimeError as e:
-		displayInfo("Cannot set visibility for {0}".format(new_control))
 	
 	# Print feedback for user
 	select(jointCtrlObj)
@@ -927,15 +944,7 @@ def bake_dynamic_chain():
 		progressWindow(edit=1,status=("Baking chain " + str(j) + " of " + str(i) + " :"))
 		j+=1
 		chainCtrl = str(obj)
-		#baseJoint = str(getAttr(chainCtrl + ".linkedBaseJoint"))
-		#endJoint = str(getAttr(chainCtrl + ".linkedEndJoint"))
 		bakingJoints = "{"
-		#currentJoint = [endJoint]
-		##Determine joints to be baked
-		#while currentJoint[0] != baseJoint:
-			#bakingJoints=(bakingJoints + currentJoint[0] + "\", \"")
-			#select(currentJoint[0])
-			#currentJoint=pickWalk(d='up')
 		all_dyn_joints = getAttr(chainCtrl + ".allDynJoints")
 		all_dyn_joints = all_dyn_joints.split(',')
 		for joint in all_dyn_joints:
@@ -957,7 +966,6 @@ def bake_dynamic_chain():
 		print "All joints controlled by " + chainCtrl + " have now been baked!\n"
 		
 	progressWindow(endProgress = True)
-	
 
 #///////////////////////////////////////////////////////////////////////////////////////
 #								DELETE DYNAMICS PROCEDURE
@@ -1034,7 +1042,6 @@ def delete_dynamic_chain():
 		#Print feedback to the user.
 		print "Dynamics have been deleted from the chain.\n"
 		
-
 def disable_dynamics():
 	sel=mc.ls(selection=True)
 	try:
@@ -1079,13 +1086,16 @@ def delete_baked_frames():
 		for joint in dyn_joints.split(','):
 			cutKey(joint, clear = True)
 			
-			
 def create_character_from_prefs():
 	# XXX Doesn't do any error checking for names in xml file
 	# XXX Only does joints.  What about attrs?
 	global USING_ALL_CONTROLS
 	item = fileDialog()
-	prefs = xml_utils.ElementTree.parse(str(item))
+	try:
+		prefs = xml_utils.ElementTree.parse(str(item))
+	except SyntaxError as se:
+		mel.warning("Unable to parse character prefs. Error: \n{0}".format(str(se)))
+		return
 	root = prefs.getroot()
 	creation_dict = {}
 	# Get all the presets and store them in a dictionary that can be retrieved later
@@ -1117,8 +1127,6 @@ def create_character_from_prefs():
 					        '{0}.{1}'.format(attr.attrib['name'], setting), 
 					        float(value)
 					)
-
-
 
 def save_character_to_prefs():
 	item = fileDialog2()
@@ -1217,8 +1225,7 @@ def main():
 	separator(h=20,w=330)
 	checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
 	checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
-	checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Joints cannot be locked*: ")
-	checkBoxGrp('selectAllControls', cw=(1, 200), label = "Check if controls are non-hierarchy: ")
+	checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Cannot be locked*: ")
 	#separator -h 20  -w 330;
 	setParent('..')
 	setParent('..')
