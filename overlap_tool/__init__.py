@@ -607,15 +607,35 @@ def create_dynamic_chain():
 	select(nameOfCurve)
 	select(joint_list[0], joint_list[-1])
 	ik_info = ikHandle(ccv=True,sol='ikSplineSolver',simplifyCurve=True)
-	curve = ik_info[-1]
+	curve = ik_info[-1] 
 	select(curve)
 	mm.eval('dynCreateSoft 0 0 1 1 0')
+	#Create Joint Chain Controller Object
+	jointCtrlObjArray=[]
+	jointCtrlObjArray.append(str(createNode('implicitSphere')))
+	jointCtrlObjArray=pickWalk(d='up')
+	jointCtrlObj=jointCtrlObjArray[0]
+	#Point Constrain Control Object to the end joint
+	pointConstraint(endJoint,jointCtrlObj)
 	constraint_weights = constrain_joints(
 	        controls, 
 	        joint_list, 
 	        blend_joints, 
 	        joints_per_control
 	)
+	dupe_nodes = add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints)
+	dupe_controls = []
+	for node in dupe_nodes:
+		if len(dupe_controls) < len(controls) and str(node).endswith('CON'):
+			dupe_controls.append(node)
+
+	# Build Clusters from curve
+	clusters = build_clusters_from_curve(curve, len(jointPos))
+	
+	# Constrain the clusters to the duplicate controls
+	for i, dupe_control in enumerate(dupe_controls):
+		scaleConstraint(dupe_control, clusters[i])
+		parentConstraint(dupe_control, clusters[i])
 	#mm.eval('makeCurvesDynamicHairs false false true')
 	##Determine what the name of the dynamic curve is
 	##XXX Need a better way to get the curve name
