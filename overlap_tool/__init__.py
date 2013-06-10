@@ -65,7 +65,7 @@ USING_ALL_CONTROLS = False
 HAS_TIP_CONSTRAINT = False
 ALLOW_CHAIN_STRETCH = False
 
-
+NODE_SUFFIX = 'CON'
 #---------------------------------------------------------------------------------#
 # Helper Functions 
 #---------------------------------------------------------------------------------#
@@ -90,7 +90,7 @@ def add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints):
 		all_nodes = replace_joint_nodes(new_control, all_nodes, blend_joints)
 		#parent(new_control, new_ctrl_group)
 	# Add this to keep track in case of deletion
-	add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
+	#add_name_to_attr(jointCtrlObj, {'blendControl' : new_control})
 	#parent(new_control, world=True)
 	
 	# Turn off visibility on new controls
@@ -112,31 +112,33 @@ def add_dynamic_attributes(jointCtrlObj):
 	        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=DYN_STIFFNESS)
 	#addAttr(jointCtrlObj,
         #        min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
-	addAttr(jointCtrlObj,
-	        min = 0, ln = 'iterations', max = 10000, keyable = True, at='double', dv=ITERATIONS)
-	addAttr(jointCtrlObj,
-                min=0,ln='damping',max=100,keyable=True,at='double',dv=DYN_DAMPING)
-	addAttr(jointCtrlObj,
-                min=0,ln="drag",max=1,keyable=True,at='double',dv=DYN_DRAG)
-	addAttr(jointCtrlObj,
-                min=0,ln='friction',max=1,keyable=True,at='double',dv=DYN_FRICTION)
-	addAttr(jointCtrlObj,
-                min=0,ln="gravity",max=10,keyable=True,at='double',dv=DYN_GRAVITY)
+	#addAttr(jointCtrlObj,
+	        #min = 0, ln = 'iterations', max = 10000, keyable = True, at='double', dv=ITERATIONS)
+	#addAttr(jointCtrlObj,
+                #min=0,ln='damping',max=100,keyable=True,at='double',dv=DYN_DAMPING)
+	#addAttr(jointCtrlObj,
+                #min=0,ln="drag",max=1,keyable=True,at='double',dv=DYN_DRAG)
+	#addAttr(jointCtrlObj,
+                #min=0,ln='friction',max=1,keyable=True,at='double',dv=DYN_FRICTION)
+	#addAttr(jointCtrlObj,
+                #min=0,ln="gravity",max=10,keyable=True,at='double',dv=DYN_GRAVITY)
 	addAttr(jointCtrlObj,
                 min=0,ln="controllerSize",max=500,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
-	addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
-	setAttr((jointCtrlObj + ".turbulenceCtrl"),
-                lock=True)
+	#addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
+	#setAttr((jointCtrlObj + ".turbulenceCtrl"),
+                #lock=True)
+	#addAttr(jointCtrlObj,
+                #min=0,ln="strength",max=1,keyable=True,at='double',dv=DYN_STRENGTH)
+	#addAttr(jointCtrlObj,
+                #min=0,ln="frequency",max=2,keyable=True,at='double',dv=DYN_FREQUENCY)
+	#addAttr(jointCtrlObj,
+                #min=0,ln="speed",max=2,keyable=True,at='double',dv=DYN_SPEED)
+	#addAttr(jointCtrlObj,
+	        #min=0, ln="blend",max=1,keyable=True,at='double',dv=DYN_BLEND)
 	addAttr(jointCtrlObj,
-                min=0,ln="strength",max=1,keyable=True,at='double',dv=DYN_STRENGTH)
+	        min=0, ln="attraction", max=1, keyable=True, at='double', dv=MAGNETISM)
 	addAttr(jointCtrlObj,
-                min=0,ln="frequency",max=2,keyable=True,at='double',dv=DYN_FREQUENCY)
-	addAttr(jointCtrlObj,
-                min=0,ln="speed",max=2,keyable=True,at='double',dv=DYN_SPEED)
-	addAttr(jointCtrlObj,
-	        min=0, ln="blend",max=1,keyable=True,at='double',dv=DYN_BLEND)
-	addAttr(jointCtrlObj,
-	        min=0, ln="magnetism", max=1, keyable=True, at='double', dv=MAGNETISM)
+	        min=0, ln='smoothness', max=10, keyable=True, at='double', dv=3.0)
 
 def add_name_to_attr(jointCtrlObj, obj_names):
 	""" Add specified names to the attributes.
@@ -238,6 +240,9 @@ def constrain_joints(joint_names, joint_list, blend_joints, joints_per_control):
 				constrainer.append(joint_names[i])
 	else:
 		constrainer = joint_names
+		
+	if len(joint_names) < len(joint_list):
+		constrainer.append(joint_names[-1])
 	#constrainer.append(joint_names[-1])
 	for i, cur_joint in enumerate(joint_list):
 		try:
@@ -258,15 +263,15 @@ def constrain_joints(joint_names, joint_list, blend_joints, joints_per_control):
 			displayInfo("Dynamic joints could not constrain to original joints.\n" )
 
 	# Create constraints from original joints to the duplicate blend joints	
-	for i, cur_joint in enumerate(blend_joints):
-		try:
-			scaleConstraint(cur_joint, constrainer[i])
-		except RuntimeError as e:
-			displayInfo("Unable to perform scale constrain on {0}".format(constrainer[i]))
-		try:
-			parentConstraint(cur_joint, constrainer[i], mo=True)
-		except RuntimeError as e:
-			displayInfo("Blended joints could not constrain to original joints.\n")
+	#for i, cur_joint in enumerate(blend_joints):
+		#try:
+			#scaleConstraint(cur_joint, constrainer[i])
+		#except RuntimeError as e:
+			#displayInfo("Unable to perform scale constrain on {0}".format(constrainer[i]))
+		#try:
+			#parentConstraint(cur_joint, constrainer[i], mo=True)
+		#except RuntimeError as e:
+			#displayInfo("Blended joints could not constrain to original joints.\n")
 	return constraint_weights
 
 def create_joints(joint_names, jointPos, joint_list, blend_joints):
@@ -344,7 +349,8 @@ def get_joint_info(currentJoint, endJoint, controls):
 		sel = ls(selection=True)
 		child = sel[0]
 		while not isinstance(child, Joint):
-			if isinstance(child, Transform) and 'CON' in str(child):
+			#if isinstance(child, Transform) and 'CON' in str(child):
+			if str(child).endswith(NODE_SUFFIX):
 				controls.append(child)
 				count += 1
 				joints_per_control.append(0)
@@ -496,7 +502,8 @@ def find_end_joint(start_control, end_joint= '', to_next_control=False):
 	else:
 		for child in children:
 			# Go until the next controller is found.
-			if to_next_control and str(child).endswith('CON'):
+			# CHANGE BACK TO CON FOR CONTROLLERS
+			if to_next_control and str(child).endswith(NODE_SUFFIX):
 				return end_joint
 			if isinstance(child, Joint) and 'END' not in str(child):
 				end_joint = child
@@ -510,6 +517,32 @@ def get_instance_number(prefix='', instance=0, suffix=''):
 		instance += 1
 	return instance
 
+def get_first_joint(node):
+	children = node.getChildren()
+	if not children:
+		return None
+	else:
+		for child in children:
+			if isinstance(child, Joint):
+				return child
+			else:
+				first_joint = get_first_joint(child)
+	return first_joint
+
+def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
+	goal_attrs = []
+	for i, goalPP in enumerate(goalPPs):			
+		addAttr(jointCtrlObj,
+			min=0,ln='goal{0}'.format(str(i)),max=1,keyable=True,at='float',dv=goalPP)
+
+		goal_attrs.append(expression(
+		        s = 'particle -e -or {i} -at goalPP -fv `getAttr {val}` {particle} ;'.format(
+		                i = str(i),
+		                particle = particle_system,
+		                val = '{0}.goal{1}'.format(jointCtrlObj, str(i)),
+		        ), 
+		        n='goal{0}'.format(i)))
+		
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
@@ -537,7 +570,7 @@ def create_dynamic_chain():
 	elif len(sel) == 1:
 		if not isinstance(sel[0], Joint):
 			controls.append(sel[0])
-			baseJoint = [item for item in sel[0].getChildren() if isinstance(item, Joint)][0]
+			baseJoint = get_first_joint(base_ctrl) 
 			endJoint = find_end_joint(sel[0], to_next_control=True)
 			if endJoint == '':
 				warning("Only one controller selected with one joint attached.")
@@ -558,8 +591,9 @@ def create_dynamic_chain():
 		# Check if joints or controllers are selected
 		if not isinstance(base_ctrl, Joint):
 			controls.append(base_ctrl)
-			base_children = base_ctrl.getChildren()
-			baseJoint = [node for node in base_children if isinstance(node, Joint)][0]
+			baseJoint = get_first_joint(base_ctrl)
+			#base_children = base_ctrl.getChildren()
+			#baseJoint = [node for node in base_children if isinstance(node, Joint)][0]
 		else:
 			baseJoint = base_ctrl
 	
@@ -602,21 +636,30 @@ def create_dynamic_chain():
 	endJoint = joint_list[-1]
 	#Now that $jointPos[] holds the world space coords of our joints, 
 	#we need to build a cv curve with points at each XYZ coord.
-	nameOfCurve = build_curve_from_joint(jointPos)	
+	curve = build_curve_from_joint(jointPos)
 	#Make curve dynamic.
-	select(nameOfCurve)
-	select(joint_list[0], joint_list[-1])
-	ik_info = ikHandle(ccv=True,sol='ikSplineSolver',simplifyCurve=True)
-	curve = ik_info[-1] 
+	select(joint_list[0], joint_list[-1], curve)
+	ik_info = ikHandle(ccv=False,sol='ikSplineSolver',simplifyCurve=True)
+	ik_handle = ik_info[0]
 	select(curve)
+	soft_curve = ls(selection=True)[0]
 	mm.eval('dynCreateSoft 0 0 1 1 0')
+	goal_curve = "copyOf{0}".format(str(curve))
+	particle_system = [item for item in soft_curve.getChildren() if str(item).endswith('Particle')][0]
+	goalPPs = getAttr('{0}.goalPP'.format(particle_system))
 	#Create Joint Chain Controller Object
 	jointCtrlObjArray=[]
 	jointCtrlObjArray.append(str(createNode('implicitSphere')))
 	jointCtrlObjArray=pickWalk(d='up')
 	jointCtrlObj=jointCtrlObjArray[0]
+	# Add dynamic attribute
+	add_dynamic_attributes(jointCtrlObj)
 	#Point Constrain Control Object to the end joint
 	pointConstraint(endJoint,jointCtrlObj)
+
+	#Rename Ctrl Obj
+	jointCtrlObj=str(rename(jointCtrlObj, (baseJoint + "DynChainControl")))
+
 	constraint_weights = constrain_joints(
 	        controls, 
 	        joint_list, 
@@ -626,16 +669,56 @@ def create_dynamic_chain():
 	dupe_nodes = add_duplicate_blend_controls(jointCtrlObj, controls, blend_joints)
 	dupe_controls = []
 	for node in dupe_nodes:
-		if len(dupe_controls) < len(controls) and str(node).endswith('CON'):
+		if len(dupe_controls) < len(controls) and str(node).endswith('{0}'.format(NODE_SUFFIX)):
 			dupe_controls.append(node)
 
 	# Build Clusters from curve
-	clusters = build_clusters_from_curve(curve, len(jointPos))
+	clusters = build_clusters_from_curve(goal_curve, len(jointPos))
 	
 	# Constrain the clusters to the duplicate controls
 	for i, dupe_control in enumerate(dupe_controls):
 		scaleConstraint(dupe_control, clusters[i])
 		parentConstraint(dupe_control, clusters[i])
+		# copy the keys over from control
+		item = copyKey(controls[i])
+		if item != 0:
+			pasteKey(dupe_control)
+	
+	# Add spring object
+	#spring_system = spring(particle_system)
+	
+	# Connect attributes on the controller sphere to the follicle node
+	particle_to_ctrl_attrs = {
+	        'attraction' : 'goalWeight[0]',
+	        'smoothness' : 'goalSmoothness',
+        }
+	connect_controller_to_system(jointCtrlObj, particle_system, particle_to_ctrl_attrs)
+	#Connect scale of controller to the size attr
+	connectAttr((jointCtrlObj + ".controllerSize"),
+                    (jointCtrlObj + ".scaleX"), f=True)
+	connectAttr((jointCtrlObj + ".controllerSize"), 
+                    (jointCtrlObj + ".scaleY"), f=True)
+	connectAttr((jointCtrlObj + ".controllerSize"), 
+                    (jointCtrlObj + ".scaleZ"), f=True)
+	
+	#Lock And Hide Attributes on Control Object.
+	lock_and_hide_attr(jointCtrlObj)
+	
+	# Create all the expressions for each goal
+	particle_shape = particle_system.getChildren()[0]
+	add_goal_attrs(jointCtrlObj, particle_shape, goalPPs)	
+	
+	# Create a new group
+	dynamic_group = group(name='{0}_DynamicChainGroup'.format(baseJoint))
+	# Parent all the controls to new group
+	parent(jointCtrlObj, dynamic_group)
+	parent(ik_handle, dynamic_group)
+	#parent(spring_system[0], dynamic_group)
+	parent(clusters, dynamic_group)
+	parent(soft_curve, dynamic_group)
+	parent(goal_curve, dynamic_group)
+	parent(dynamic_group, controls[0].getParent())
+	#test_exp = expression(s = 'particle -e -or 0 -at goalPP -fv `getAttr {0}.gravity` curve1ParticleShape ;'.format(str(jointCtrlObj)), object=str(jointCtrlObj), n='goal1')
 	#mm.eval('makeCurvesDynamicHairs false false true')
 	##Determine what the name of the dynamic curve is
 	##XXX Need a better way to get the curve name
@@ -1286,9 +1369,9 @@ def main():
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
 	#Tip Constraint Checkbox
 	separator(h=20,w=330)
-	checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
-	checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
-	checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Cannot be locked*: ")
+	#checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
+	#checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
+	#checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Cannot be locked*: ")
 	#separator -h 20  -w 330;
 	setParent('..')
 	setParent('..')
@@ -1297,8 +1380,8 @@ def main():
 	rowColumnLayout(nc=2,cw=[(1, 175), (2, 150)])
 	text("Select base joint, shift select tip: \n")
 	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
-	text("Select all ctrls and colliders: ")
-	button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
+	#text("Select all ctrls and colliders: ")
+	#button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
 	#text("Select control: ")
@@ -1309,15 +1392,15 @@ def main():
 	#button(c=lambda *args: overlap_tool.enable_dynamics(), label="Enable Dynamics")
 	setParent('..')
 	#Bake Animation Layouts
-	separator(h=20,w=330)
-	text("                               -Bake Joint Animation-")
-	rowColumnLayout('bakeRowColumn',nc=3,cw=[(1, 100), (2, 100)])
-	text("Start Frame: ")
-	text("End Frame:")
-	text("Select Control:")
-	intField('startFrame')
-	intField('endFrame',value=400)
-	button(c=lambda *args: overlap_tool.bake_dynamic_chain(),label="Bake Dynamics")
+	#separator(h=20,w=330)
+	#text("                               -Bake Joint Animation-")
+	#rowColumnLayout('bakeRowColumn',nc=3,cw=[(1, 100), (2, 100)])
+	#text("Start Frame: ")
+	#text("End Frame:")
+	#text("Select Control:")
+	#intField('startFrame')
+	#intField('endFrame',value=400)
+	#button(c=lambda *args: overlap_tool.bake_dynamic_chain(),label="Bake Dynamics")
 	
 	# XXX TODO Add section for opening prefs files.
 	setParent('..')
