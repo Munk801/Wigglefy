@@ -37,6 +37,7 @@ from pymel.all import *
 from pymel.core.runtime import ClusterCurve
 
 # External
+from PyQt4 import QtGui
 import ani_tools.rmaya.ani_library as ani_lib
 from maya_tools.ui.gui_tool_kit import *
 from pipe_utils import xml_utils
@@ -107,9 +108,9 @@ def add_dynamic_attributes(jointCtrlObj):
 	addAttr(jointCtrlObj,
 	        min=0, ln="attraction", max=1, keyable=True, at='double', dv=MAGNETISM)
 	addAttr(jointCtrlObj,
-	        min=0, ln='smoothness', max=10, keyable=True, at='double', dv=DYN_SMOOTHNESS)
+	        min=0, ln='lag', max=10, keyable=True, at='double', dv=DYN_SMOOTHNESS)
 	addAttr(jointCtrlObj,
-	        min=0, ln='conserve', max=1, keyable=True, at='double', dv=1.0)
+	        min=0, ln='easeIn', max=1, keyable=True, at='double', dv=1.0)
 
 def add_name_to_attr(jointCtrlObj, obj_names):
 	""" Add specified names to the attributes.
@@ -168,7 +169,7 @@ def change_visibility(items, visibility):
 			Whether the item should be visible
 
 	"""
-	[setAttr("{0}.visibility".format(item), visibility) for item in items]
+	[setAttr("{0}.lodVisibility".format(item), visibility) for item in items]
 
 def connect_controller_to_system(ctrl, system, attrs):
 	""" Connect the system attributes to the controllers.
@@ -320,7 +321,6 @@ def get_joint_info(currentJoint, endJoint, controls):
 		sel = ls(selection=True)
 		child = sel[0]
 		while not isinstance(child, Joint):
-			#if isinstance(child, Transform) and 'CON' in str(child):
 			if str(child).endswith(NODE_SUFFIX):
 				controls.append(child)
 				count += 1
@@ -449,7 +449,20 @@ def get_instance_number(prefix='', instance=0, suffix=''):
 	while objExists("{0}{1}{2}".format(prefix, instance, suffix)):
 		instance += 1
 	return instance
-
+	
+def get_all_controllers(node):
+	controls = []
+	children = node.getChildren()
+	if not children:
+		return None
+	else:
+		for child in children:
+			if str(child).endswith(NODE_SUFFIX):
+				controls.extend([child])
+			else:
+				controls.extend([get_all_controllers(child)])
+	return controls
+	
 def get_first_joint(node):
 	""" Find the first joint by recursively going through the hierarchy.
 	Args:
@@ -457,6 +470,8 @@ def get_first_joint(node):
 	        	Node which to start searching.
 	                
 	"""
+	if isinstance(node, Joint):
+		return node
 	children = node.getChildren()
 	if not children:
 		return None
@@ -466,6 +481,18 @@ def get_first_joint(node):
 				return child
 			else:
 				first_joint = get_first_joint(child)
+	return first_joint
+
+def get_first_control(node):
+	children = node.getChildren()
+	if not children:
+		return None
+	else:
+		for child in children:
+			if str(child).endswith(NODE_SUFFIX):
+				return child
+			else:
+				first_control = get_first_control(child)
 	return first_joint
 
 def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
@@ -483,13 +510,13 @@ def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
 	# Enumerate through the values and create an expression and attach to the joint controller
 	for i, goalPP in enumerate(goalPPs):			
 		addAttr(jointCtrlObj,
-			min=0,ln='goal{0}'.format(str(i)),max=1,keyable=True,at='float',dv=goalPP)
+			min=0,ln='jointStiffness{0}'.format(str(i)),max=1,keyable=True,at='float',dv=goalPP)
 
 		goal_attrs.append(expression(
 		        s = 'particle -e -or {i} -at goalPP -fv `getAttr {val}` {particle} ;'.format(
 		                i = str(i),
 		                particle = particle_system,
-		                val = '{0}.goal{1}'.format(jointCtrlObj, str(i)),
+		                val = '{0}.jointStiffness{1}'.format(jointCtrlObj, str(i)),
 		        ), 
 		        n='goal{0}'.format(i)))
 	return goal_attrs
@@ -577,7 +604,10 @@ def create_dynamic_chain():
 		#String variable to house current joint being queried in the while loop.
 		currentJoint=baseJoint
 		select(baseJoint)
+		controls = get_all_controllers(currentJoint)
 		joint_names, jointPos, joints_per_control = get_joint_info(currentJoint, endJoint, controls)
+		#joint_names, jointPos = get_joints(currentJoint, endJoint)
+		
 	# Create the list of joints to be parent constrained to the FK joints
 	joint_list = []
 	blend_joints = []
@@ -638,14 +668,11 @@ def create_dynamic_chain():
 		if item != 0:
 			pasteKey(dupe_control)
 	
-	# Add spring object
-	#spring_system = spring(particle_system)
-	
 	# Connect attributes on the controller sphere to the follicle node
 	particle_to_ctrl_attrs = {
 	        'attraction' : 'goalWeight[0]',
-	        'smoothness' : 'goalSmoothness',
-	        'conserve' : 'conserve',
+	        'lag' : 'goalSmoothness',
+	        'easeIn' : 'conserve',
         }
 	connect_controller_to_system(jointCtrlObj, particle_system, particle_to_ctrl_attrs)
 	#Connect scale of controller to the size attr
@@ -690,6 +717,9 @@ def create_dynamic_chain():
 	}
 	add_name_to_attr(jointCtrlObj, obj_names)
 	
+	# Change the visibility for the controls
+	change_visibility(controls, 0)
+	
 	# Print feedback for user
 	select(jointCtrlObj)
 	
@@ -716,19 +746,6 @@ def delete_dynamic_chain():
 			controls = [str(item) for item in controls]
 			dup_controls = getAttr('{0}.duplicateControls'.format(chainCtrl)).split(',')
 			dup_controls = [str(item) for item in dup_controls]
-			for control in dup_controls:
-				try:
-					delete(control)
-				except Exception:
-					pass
-			# Copy all the keys from the duplicated control to original.
-			# Cut all the keys from the original control since they should have
-			# been copied to the duplicated
-			for i, control in enumerate(dup_controls):
-				keys = copyKey(control)
-				if keys != 0:
-					cutKey(controls[i], clear=True)
-					pasteKey(controls[i])
 			# Remove all the goal expressions
 			goal_expressions = getAttr('{0}.goalExpressions'.format(chainCtrl)).split(',')
 			goal_expressions = [str(item) for item in goal_expressions]
@@ -737,6 +754,21 @@ def delete_dynamic_chain():
 			select(chainCtrl)
 			dynamic_group = pickWalk(d = 'up')
 			delete(dynamic_group)
+			# Copy all the keys from the duplicated control to original.
+			# Cut all the keys from the original control since they should have
+			# been copied to the duplicated
+			for i, control in enumerate(dup_controls):
+				keys = copyKey(control)
+				if keys != 0:
+					cutKey(controls[i], clear=True)
+					pasteKey(controls[i])
+			for control in dup_controls:
+				try:
+					delete(control)
+				except Exception:
+					pass
+			# Change the visiblity back for the original controllers	
+			change_visibility(controls, 1)
 		#Print feedback to the user.
 		print "Dynamics have been deleted from the chain.\n"
 			
@@ -811,15 +843,15 @@ def save_character_to_prefs():
 		# Save the attrs
 		attr_info = xml_utils.ElementTree.SubElement(attrs, 'attr')
 		attr_dict = {
-			'smoothness' : getAttr('{0}.smoothness'.format(ctrl)),
-			'conserve' : getAttr('{0}.conserve'.format(ctrl)),
+			'lag' : getAttr('{0}.lag'.format(ctrl)),
+			'easeIn' : getAttr('{0}.easeIn'.format(ctrl)),
 			'attraction' : getAttr('{0}.attraction'.format(ctrl)),
 			'controllerSize' : getAttr('{0}.controllerSize'.format(ctrl)),
 		}
 		attrs = listAttr(ctrl)
 		# Add all the goals
 		for attr in attrs:
-			if str(attr).startswith('goal') and str(attr) != 'goalExpressions':
+			if str(attr).startswith('jointStiffness'):
 				attr_dict[str(attr)] = getAttr('{0}.{1}'.format(ctrl, attr))
 		attr_info.set('name', ctrl)
 		for attr_name, attr_val in attr_dict.iteritems():
@@ -829,17 +861,114 @@ def save_character_to_prefs():
 	tree.write(str(item[0]))
 	warning('{0} has been written.'.format(str(item[0])))
 
+#///////////////////////////////////////////////////////////////////////////////////////
+#								BAKING PROCEDURE
+#///////////////////////////////////////////////////////////////////////////////////////
+def bake_dynamic_chain():
+	initialSel=mc.ls(selection=True)
+	#Declare necessary variables
+	allCtrls=[]
+	i=0
+	amount=0
+	#Filter selection to contain only dynamic chain controllers.
+	for obj in initialSel:
+		if mel.attributeExists("nameOfGoalCurve", obj):
+			allCtrls.append(str(obj))
+			i += 1
+
+	progressWindow(
+	        status="Baking Joint Chains:",
+		title="RFX Dynamic Joint Chain:",
+		maxValue=100,
+		minValue=0,
+		isInterruptable=True,
+		progress=amount
+	)
+	#Create a progress window
+	#Construct frame range variable
+	frameRangeToBake=''
+	startFrame=float(intField('startFrame',query=1,value=1))
+	endFrame=float(intField('endFrame',query=1,value=1))
+	frameRangeToBake = '"{sf}:{ef}"'.format(sf = str(startFrame), ef = str(endFrame))
+	j=1
+	#For all of the selected chain controllers.
+	for obj in allCtrls:
+		if progressWindow(query=1, isCancelled=1):
+			break
+			# Check if the dialog has been cancelled
+			# Check if end condition has been reached
+
+		#if progressWindow(query=1, progress=1) >= 100:
+			#break
+
+		amount=((100 / i) * j)
+		progressWindow(edit=1,progress=amount)
+		progressWindow(edit=1,status=("Baking chain " + str(j) + " of " + str(i) + " :"))
+		j+=1
+		chainCtrl = str(obj)
+		#baseJoint = str(getAttr(chainCtrl + ".linkedBaseJoint"))
+		#endJoint = str(getAttr(chainCtrl + ".linkedEndJoint"))
+		bakingJoints = "{"
+		#currentJoint = [endJoint]
+		#Determine joints to be baked
+		all_dyn_joints = getAttr(chainCtrl + ".allDynJoints")
+		all_dyn_joints = all_dyn_joints.split(',')
+		for joint in all_dyn_joints:
+			bakingJoints = (bakingJoints + "\"" + joint + "\", ")	
+		bakingJoints = bakingJoints.rstrip(', ')
+		bakingJoints=(bakingJoints + "}")
+		#Add the base joint that the while loop will miss
+		#Concatenate the bake simulation command with the necessary joint names.
+		bakingJoints=(
+		        "bakeResults -simulation true -t " + frameRangeToBake + \
+		        " -sampleBy 1 -disableImplicitControl true -preserveOutsideKeys true"\
+		        " -sparseAnimCurveBake false -controlPoints false -shape true" + bakingJoints
+		)
+		#Evaluate the $bakingJoints string to bake the simulation.
+		mel.eval(bakingJoints)
+		#Tell control object that joints are baked.
+		#setAttr((chainCtrl + ".bakingState"), 1)
+		#Print feedback to user
+		print "All joints controlled by " + chainCtrl + " have now been baked!\n"
+
+	progressWindow(endProgress = True)
+
 
 #///////////////////////////////////////////////////////////////////////////////////////
 # UI
 #///////////////////////////////////////////////////////////////////////////////////////
-
+class OverlapWindow(QtGui.QMainWindow):
+	def __init__(self):
+		super(OverlapWindow, self).__init__()
+		self.initUI()
+	
+	def initUI(self):
+		menu_bar = self.menuBar()
+		
+		open_file = QtGui.QAction('Open', self)
+		open_file.setShortcut('Ctrl+O')
+		open_file.setStatusTip('Open Character Prefs')
+		open_file.trigger.connect(self.showDialog)
+		
+		file_menu = menu_bar.addMenu('&File')
+		file_menu.addAction(openFile)
+		
+		self.setGeometry(300, 300, 350, 300)
+		self.show()
+	
+	def showDialog(self):
+		fname = QtGui.QFileDialog.getOpenFileName(self, 'Open file', '/home')
+		
+		f = open(fname, 'r')
+		
+		with f:
+			data = f.read()
+			self.charPrefs = data
+	
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
 #///////////////////////////////////////////////////////////////////////////////////////
 def main():
-	test = OverlapWindow()
-	test.create()
 	#XXX TODO: Switch from using MELs gui system to ui_lib
 	if window('dynChainWindow',q=1,ex=1):
 		deleteUI('dynChainWindow')
@@ -905,15 +1034,15 @@ def main():
 	#button(c=lambda *args: overlap_tool.enable_dynamics(), label="Enable Dynamics")
 	setParent('..')
 	#Bake Animation Layouts
-	#separator(h=20,w=330)
-	#text("                               -Bake Joint Animation-")
-	#rowColumnLayout('bakeRowColumn',nc=3,cw=[(1, 100), (2, 100)])
-	#text("Start Frame: ")
-	#text("End Frame:")
-	#text("Select Control:")
-	#intField('startFrame')
-	#intField('endFrame',value=400)
-	#button(c=lambda *args: overlap_tool.bake_dynamic_chain(),label="Bake Dynamics")
+	separator(h=20,w=330)
+	text("                               -Bake Joint Animation-")
+	rowColumnLayout('bakeRowColumn',nc=3,cw=[(1, 100), (2, 100)])
+	text("Start Frame: ")
+	text("End Frame:")
+	text("Select Control:")
+	intField('startFrame')
+	intField('endFrame',value=400)
+	button(c=lambda *args: overlap_tool.bake_dynamic_chain(),label="Bake Dynamics")
 	
 	# XXX TODO Add section for opening prefs files.
 	setParent('..')
