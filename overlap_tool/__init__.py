@@ -44,15 +44,6 @@ from pipe_utils import xml_utils
 #---------------------------------------------------------------------------------#
 # Globals
 #---------------------------------------------------------------------------------#
-DYN_STIFFNESS = 0.05
-DYN_DAMPING = 0.5
-DYN_DRAG = 0
-DYN_FRICTION = 0.5
-DYN_GRAVITY = 2
-DYN_STRENGTH = 0
-DYN_FREQUENCY = 0.2
-DYN_SPEED = 0.2
-DYN_BLEND = 1
 DYN_CONTROLLER_SIZE = 5
 MAGNETISM = 1
 
@@ -61,6 +52,7 @@ BLND_SUFFIX = '_BLND'
 
 ITERATIONS = 10
 
+DYN_SMOOTHNESS = 1.0
 USING_ALL_CONTROLS = False
 HAS_TIP_CONSTRAINT = False
 ALLOW_CHAIN_STRETCH = False
@@ -108,37 +100,14 @@ def add_dynamic_attributes(jointCtrlObj):
 		jointCtrlObj - (str)
 			Name of the controller object.
 	"""
-	#addAttr(jointCtrlObj,
-	#        min=0,ln='stiffness',max=1,keyable=True,at='double',dv=DYN_STIFFNESS)
-	#addAttr(jointCtrlObj,
-        #        min=0,ln='lengthFlex',max=1,keyable=True,at='double',dv=0)
-	#addAttr(jointCtrlObj,
-	        #min = 0, ln = 'iterations', max = 10000, keyable = True, at='double', dv=ITERATIONS)
-	#addAttr(jointCtrlObj,
-                #min=0,ln='damping',max=100,keyable=True,at='double',dv=DYN_DAMPING)
-	#addAttr(jointCtrlObj,
-                #min=0,ln="drag",max=1,keyable=True,at='double',dv=DYN_DRAG)
-	#addAttr(jointCtrlObj,
-                #min=0,ln='friction',max=1,keyable=True,at='double',dv=DYN_FRICTION)
-	#addAttr(jointCtrlObj,
-                #min=0,ln="gravity",max=10,keyable=True,at='double',dv=DYN_GRAVITY)
+	global DYN_SMOOTHNESS
+	DYN_SMOOTHNESS = float(floatSliderGrp('sliderSmoothness', query = 1, value = 1))
 	addAttr(jointCtrlObj,
                 min=0,ln="controllerSize",max=500,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
-	#addAttr(jointCtrlObj, ln="turbulenceCtrl", at='bool', keyable=True)
-	#setAttr((jointCtrlObj + ".turbulenceCtrl"),
-                #lock=True)
-	#addAttr(jointCtrlObj,
-                #min=0,ln="strength",max=1,keyable=True,at='double',dv=DYN_STRENGTH)
-	#addAttr(jointCtrlObj,
-                #min=0,ln="frequency",max=2,keyable=True,at='double',dv=DYN_FREQUENCY)
-	#addAttr(jointCtrlObj,
-                #min=0,ln="speed",max=2,keyable=True,at='double',dv=DYN_SPEED)
-	#addAttr(jointCtrlObj,
-	        #min=0, ln="blend",max=1,keyable=True,at='double',dv=DYN_BLEND)
 	addAttr(jointCtrlObj,
 	        min=0, ln="attraction", max=1, keyable=True, at='double', dv=MAGNETISM)
 	addAttr(jointCtrlObj,
-	        min=0, ln='smoothness', max=10, keyable=True, at='double', dv=3.0)
+	        min=0, ln='smoothness', max=10, keyable=True, at='double', dv=DYN_SMOOTHNESS)
 	addAttr(jointCtrlObj,
 	        min=0, ln='conserve', max=1, keyable=True, at='double', dv=1.0)
 
@@ -436,44 +405,6 @@ def set_chain_attr_values(jointCtrlObj):
 	setAttr((jointCtrlObj + ".drag"),
                 sliderDrag)
 	
-def stretch_chain(nameOfDynCurve, baseJoint, endJoint):
-	curveInfoNode=str(arclen(nameOfDynCurve, ch=1))
-	#Create curve info node
-	curveInfoNode=str(rename(curveInfoNode,
-                (baseJoint + "CurveInfoNode")))
-	#Create mult/div node
-	nameOfUtilityNode=str(shadingNode('multiplyDivide', asUtility=True))
-	nameOfUtilityNode=str(rename(nameOfUtilityNode,
-                (baseJoint + "MultiDivNode")))
-	#Create condition node
-	nameOfConditionNode=shadingNode('condition', asUtility=True)
-	nameOfConditionNode=rename(nameOfConditionNode,
-                (baseJoint + "ConditionNode"))
-	#Setup multi/div node
-	setAttr((nameOfUtilityNode + ".operation"), 2)
-	connectAttr((curveInfoNode + ".arcLength"),
-                    (nameOfUtilityNode + ".input1X"), force=True)
-	setAttr((nameOfUtilityNode + ".input2X"),(getAttr(curveInfoNode + ".arcLength")))
-	#Setup condition node
-	connectAttr((nameOfUtilityNode + ".outputX"),
-                    (str(nameOfConditionNode) + ".firstTerm"), force=True)
-	connectAttr((nameOfUtilityNode + ".outputX"),
-                    (str(nameOfConditionNode) + ".colorIfFalseR"),force=True)
-	setAttr((str(nameOfConditionNode) + ".operation"), 4)
-	setAttr((str(nameOfConditionNode) + ".secondTerm"), 1.0)
-	setAttr((str(nameOfConditionNode) + ".colorIfTrueR"), 1.0)
-	#Initial selection going into the while loop
-	select(baseJoint)
-	currentJoint=baseJoint
-	#Will loop through all the joints between the base and end by pickwalking through them.
-	#The loop connects the scaleX of each joint to the output of the multi/div node.
-	while currentJoint != endJoint:
-		connectAttr((str(nameOfConditionNode) + ".outColorR"),
-	                    (currentJoint + ".scaleX"), f=True)
-		pickWalk(d='down')
-		sel=mc.ls(selection=True)
-		currentJoint=sel[0]
-
 def get_joints_under_controls(control, joint_names, jointPos):
 	""" This function will match new controls to the blended joints and delete the old 
 	duplicated joints. Take a parent base node, traverse through its entire tree, and replace
@@ -520,6 +451,12 @@ def get_instance_number(prefix='', instance=0, suffix=''):
 	return instance
 
 def get_first_joint(node):
+	""" Find the first joint by recursively going through the hierarchy.
+	Args:
+		node : (str)
+	        	Node which to start searching.
+	                
+	"""
 	children = node.getChildren()
 	if not children:
 		return None
@@ -532,7 +469,18 @@ def get_first_joint(node):
 	return first_joint
 
 def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
+	""" Get all particle goals and add them as attributes to the dynamic controller.
+	Args:
+		jointCtrlObj : (str)
+			Dynamic joint controller
+		particle_system : (str)
+			Particle system attached to the curve
+		goalPPs : (list)
+			List of all goalPP values retrieved.
+			
+	"""
 	goal_attrs = []
+	# Enumerate through the values and create an expression and attach to the joint controller
 	for i, goalPP in enumerate(goalPPs):			
 		addAttr(jointCtrlObj,
 			min=0,ln='goal{0}'.format(str(i)),max=1,keyable=True,at='float',dv=goalPP)
@@ -675,8 +623,9 @@ def create_dynamic_chain():
 	dupe_controls = []
 	for node in dupe_nodes:
 		if len(dupe_controls) < len(controls) and str(node).endswith('{0}'.format(NODE_SUFFIX)):
-			dupe_controls.append(node)
-
+			dupe_control = str(rename(node, 'OVR_{0}'.format(node)))
+			dupe_controls.append(dupe_control)
+	
 	# Build Clusters from curve
 	clusters = build_clusters_from_curve(goal_curve, len(jointPos))
 	
@@ -737,7 +686,7 @@ def create_dynamic_chain():
 	        'allControls' : ','.join([str(control) for control in controls]),
 	        'allDynJoints' : ','.join([str(joint) for joint in joint_list]),
 	        'goalExpressions' : ','.join([str(exp) for exp in goal_expressions]),
-	        'duplicateControls' : ','.join([str(control) for control in dupe_control]),
+	        'duplicateControls' : ','.join([str(control) for control in dupe_controls]),
 	}
 	add_name_to_attr(jointCtrlObj, obj_names)
 	
@@ -761,19 +710,25 @@ def delete_dynamic_chain():
 			error=1
 			mel.warning("Please select a chain controller. No dynamics were deleted.")
 		
-			result=str(confirmDialog(title="Delete Dynamics Warning",
-				cancelButton="Cancel",
-				defaultButton="Cancel",
-				button=["Continue Anyway", 
-				        "Cancel"],
-				message="Deleting the dynamics on a stretchy chain may cause it to collapse. Please bake the joint chain before deleting.",
-				dismissString="Cancel"))
-			#Check if joints have been baked.
-			if result == "Cancel":
-				error=1
-				mel.warning("Dynamics were not deleted for " + chainCtrl)
 		if error == 0:
-			
+			# Apply keys to original controls
+			controls = getAttr('{0}.allControls'.format(chainCtrl)).split(',')
+			controls = [str(item) for item in controls]
+			dup_controls = getAttr('{0}.duplicateControls'.format(chainCtrl)).split(',')
+			dup_controls = [str(item) for item in dup_controls]
+			for control in dup_controls:
+				try:
+					delete(control)
+				except Exception:
+					pass
+			# Copy all the keys from the duplicated control to original.
+			# Cut all the keys from the original control since they should have
+			# been copied to the duplicated
+			for i, control in enumerate(dup_controls):
+				keys = copyKey(control)
+				if keys != 0:
+					cutKey(controls[i], clear=True)
+					pasteKey(controls[i])
 			# Remove all the goal expressions
 			goal_expressions = getAttr('{0}.goalExpressions'.format(chainCtrl)).split(',')
 			goal_expressions = [str(item) for item in goal_expressions]
@@ -856,15 +811,15 @@ def save_character_to_prefs():
 		# Save the attrs
 		attr_info = xml_utils.ElementTree.SubElement(attrs, 'attr')
 		attr_dict = {
-			'stiffness' : getAttr('{0}.smoothness'.format(ctrl)),
-			'damping' : getAttr('{0}.conserve'.format(ctrl)),
-			'drag' : getAttr('{0}.attraction'.format(ctrl)),
+			'smoothness' : getAttr('{0}.smoothness'.format(ctrl)),
+			'conserve' : getAttr('{0}.conserve'.format(ctrl)),
+			'attraction' : getAttr('{0}.attraction'.format(ctrl)),
 			'controllerSize' : getAttr('{0}.controllerSize'.format(ctrl)),
 		}
 		attrs = listAttr(ctrl)
 		# Add all the goals
 		for attr in attrs:
-			if str(attr).startswith('goal'):
+			if str(attr).startswith('goal') and str(attr) != 'goalExpressions':
 				attr_dict[str(attr)] = getAttr('{0}.{1}'.format(ctrl, attr))
 		attr_info.set('name', ctrl)
 		for attr_name, attr_val in attr_dict.iteritems():
@@ -874,10 +829,17 @@ def save_character_to_prefs():
 	tree.write(str(item[0]))
 	warning('{0} has been written.'.format(str(item[0])))
 
+
+#///////////////////////////////////////////////////////////////////////////////////////
+# UI
+#///////////////////////////////////////////////////////////////////////////////////////
+
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
 #///////////////////////////////////////////////////////////////////////////////////////
 def main():
+	test = OverlapWindow()
+	test.create()
 	#XXX TODO: Switch from using MELs gui system to ui_lib
 	if window('dynChainWindow',q=1,ex=1):
 		deleteUI('dynChainWindow')
@@ -889,35 +851,35 @@ def main():
 	#Dynamic Chain Creation Options Layout
 	frameLayout('creationOptions',h=175,
 		borderStyle='etchedOut',
-		collapsable=True,
+		collapsable=False,
 		w=350,
 		label="Dynamic Chain Creation Options:")
 	frameLayout('creationOptions',e=1,cl=True)
 	columnLayout(cw=350)
 	#Stiffness
-	floatSliderGrp('sliderStiffness',min=0,max=1,
+	floatSliderGrp('sliderSmoothness',min=0,max=10,
 		cw3=(60, 60, 60),
 		precision=3,
-		value=0.6,
-		label="Stiffness:",
+		value=3,
+		label="Smoothness:",
 		field=True,
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
-	#Damping
-	floatSliderGrp('sliderDamping',min=0,max=100,
-		cw3=(60, 60, 60),
-		precision=3,
-		value=10,
-		label="Damping:",
-		field=True,
-		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
-	#Drag
-	floatSliderGrp('sliderDrag',min=0,max=1,
-		cw3=(60, 60, 60),
-		precision=3,
-		value=.5,
-		label="Drag:",
-		field=True,
-		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
+	##Damping
+	#floatSliderGrp('sliderDamping',min=0,max=100,
+		#cw3=(60, 60, 60),
+		#precision=3,
+		#value=10,
+		#label="Damping:",
+		#field=True,
+		#cal=[(1, 'left'), (2, 'left'), (3, 'left')])
+	##Drag
+	#floatSliderGrp('sliderDrag',min=0,max=1,
+		#cw3=(60, 60, 60),
+		#precision=3,
+		#value=.5,
+		#label="Drag:",
+		#field=True,
+		#cal=[(1, 'left'), (2, 'left'), (3, 'left')])
 	#Tip Constraint Checkbox
 	separator(h=20,w=330)
 	#checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
