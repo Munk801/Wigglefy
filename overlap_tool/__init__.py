@@ -293,62 +293,6 @@ def create_joints(joint_names, jointPos, joint_list, blend_joints):
 	                )
 	        )
 		
-def get_joint_info(currentJoint, endJoint, controls):
-	""" Uses the base joint and the end joint to gather all
-	the joint names and joint positions.  Will also append
-	any controllers to the given list. 
-	Args:
-		currentJoint : (str)
-			The base joint to start from
-	        endJoint : (str)
-			The end effector joint
-	        controls : (list)
-			The list that you want to append any controls to
-	Returns:
-		(joint_names, jointPos)
-			Returns both a list of the joint names and the joint positions.
-	
-	"""
-	joint_names = []
-	jointPos = []
-	joints_per_control = [0]
-	count = 0;
-	while currentJoint != endJoint:
-		joint_names.append(currentJoint)
-		jointPos.append(joint(currentJoint, q=1, p=1, a=1))
-		joints_per_control[count] += 1
-		pickWalk(d='down')
-		sel = ls(selection=True)
-		child = sel[0]
-		while not isinstance(child, Joint):
-			if str(child).endswith(NODE_SUFFIX):
-				controls.append(child)
-				count += 1
-				joints_per_control.append(0)
-			prev_sel = child
-			pickWalk(d='down')
-			sel = ls(selection=True)
-			# Something doesn't move smoothly down the chain
-			if prev_sel == sel[0]:
-				children = sel[0].getChildren()
-				if not children:
-					# We went too far, go back to get the children
-					pickWalk(d='up')
-					sel = ls(selection=True)
-					children = sel[0].getChildren()
-				child = [item for item in children if isinstance(item, Joint)][0]
-			else:
-				child = sel[0]
-				
-		currentJoint=child
-		select(currentJoint)
-		sel=mc.ls(selection=True)
-	#Theses 3 lines store the position of the end joint that the loop will miss.
-	currentJoint=sel[0]
-	joint_names.append(currentJoint)
-	jointPos.append(joint(currentJoint, q=1,p=1,a=1))
-	return joint_names, jointPos, joints_per_control
-
 def lock_and_hide_attr(jointCtrlObj):
 	""" Lock the attribute and hide it from the menu.
 	Args:
@@ -386,24 +330,6 @@ def replace_joint_nodes(base_node, all_nodes, blend_joints):
 						break
 			all_nodes = replace_joint_nodes(child, all_nodes, blend_joints)
 	return all_nodes
-
-def set_chain_attr_values(jointCtrlObj):
-	""" Set the dynamics chain attrs from GUI values.
-	Args:
-		baseJoint - (str)
-			Name of the base joint which the control is applied to
-	                
-	"""
-	# Set dynamic chain attributes according to creation options
-	sliderStiffness=float(floatSliderGrp('sliderStiffness',query=1,value=1))
-	sliderDamping=float(floatSliderGrp('sliderDamping',query=1,value=1))
-	sliderDrag=float(floatSliderGrp('sliderDrag',query=1,value=1))
-	setAttr((jointCtrlObj + ".stiffness"),
-                sliderStiffness)
-	setAttr((jointCtrlObj + ".damping"),
-                sliderDamping)
-	setAttr((jointCtrlObj + ".drag"),
-                sliderDrag)
 	
 def get_joints_under_controls(control, joint_names, jointPos):
 	""" This function will match new controls to the blended joints and delete the old 
@@ -466,6 +392,8 @@ def get_joints_per_control(controls, joint_names):
 	return joints_per_control
 
 def get_joint_count(base_ctrl, end_ctrl):
+	""" Get the number of joints in between two controls
+	"""
 	count = 0
 	if base_ctrl == end_ctrl:
 		return count
@@ -480,6 +408,8 @@ def get_joint_count(base_ctrl, end_ctrl):
 	return count
 
 def get_all_controllers(cur_ctrl, end_ctrl):
+	""" Get all the controllers through the chain.
+	"""
 	controls = []
 	controls.append(cur_ctrl)
 	while cur_ctrl != end_ctrl:
@@ -489,6 +419,21 @@ def get_all_controllers(cur_ctrl, end_ctrl):
 	return controls
 
 def get_joint_information(cur_joint, end_joint):
+	""" Gets all the joint information running down a chain
+	from the current joint to the end joint.
+	
+	Args:
+		cur_joint : (Joint)
+			The first joint to start from
+	        end_joint : (Joint)
+			The end joint to stop at
+	Returns:
+		joint_names, joint_pos : (list, list)
+			Return a tuple that contains both the list
+	                of joint names and the x,y,z positions
+	                of each joint respectively
+	                
+	"""
 	joint_names = []
 	joint_pos = []
 	# Add the cur_joint
@@ -523,6 +468,12 @@ def get_first_joint(node):
 	return first_joint
 
 def get_first_control(node):
+	""" Find the first control by recursively going through the hierarchy.
+	Args:
+		node : (str)
+	        	Node which to start searching.
+	
+	"""
 	children = node.getChildren()
 	if not children:
 		return None
@@ -562,13 +513,6 @@ def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
 		        n='goal{0}'.format(i)))
 	return goal_attrs
 
-def flatten(l):
-    for el in l:
-        if isinstance(el, collections.Iterable) and not isinstance(el, basestring):
-            for sub in flatten(el):
-                yield sub
-        else:
-            yield el
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
@@ -826,6 +770,8 @@ def create_character_from_prefs():
 	# XXX Only does joints.  What about attrs?
 	global USING_ALL_CONTROLS
 	item = fileDialog()
+	if not item:
+		return
 	try:
 		prefs = xml_utils.ElementTree.parse(str(item))
 	except SyntaxError as se:
@@ -865,6 +811,8 @@ def create_character_from_prefs():
 
 def save_character_to_prefs():
 	item = fileDialog2()
+	if not item:
+		return
 	all_ctrls = ls(selection=True)
 	root = xml_utils.ElementTree.Element('data')
 	joints = xml_utils.ElementTree.SubElement(root, 'joints')
@@ -872,22 +820,22 @@ def save_character_to_prefs():
 	presets = xml_utils.ElementTree.SubElement(root, 'presets')
 	# Save the joints
 	for ctrl in all_ctrls:
-		#uses_all_ctrls = getAttr('{0}.usesAllControls'.format(ctrl))
-		#if uses_all_ctrls:
-			#preset_info = xml_utils.ElementTree.SubElement(presets, 'preset')
-			#preset_info.set('allCtrls', 'True')
-			#preset_info.set('name', ctrl)
-			#controls = getAttr('{0}.allControls'.format(ctrl))
-			#joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
-			#joint_info.set('controls', controls)
-			#joint_info.set('name', ctrl)
-		#else:
-		base_joint = getAttr('{0}.baseControl'.format(ctrl))
-		end_joint = getAttr('{0}.endControl'.format(ctrl))
-		joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
-		joint_info.set('base', base_joint)
-		joint_info.set('end', end_joint)
-		joint_info.set('name', ctrl)
+		uses_all_ctrls = getAttr('{0}.usesAllControls'.format(ctrl))
+		if uses_all_ctrls:
+			preset_info = xml_utils.ElementTree.SubElement(presets, 'preset')
+			preset_info.set('allCtrls', 'True')
+			preset_info.set('name', ctrl)
+			controls = getAttr('{0}.allControls'.format(ctrl))
+			joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
+			joint_info.set('controls', controls)
+			joint_info.set('name', ctrl)
+		else:
+			base_joint = getAttr('{0}.baseControl'.format(ctrl))
+			end_joint = getAttr('{0}.endControl'.format(ctrl))
+			joint_info = xml_utils.ElementTree.SubElement(joints, 'joint')
+			joint_info.set('base', base_joint)
+			joint_info.set('end', end_joint)
+			joint_info.set('name', ctrl)
 	
 		# Save the attrs
 		attr_info = xml_utils.ElementTree.SubElement(attrs, 'attr')
@@ -955,10 +903,7 @@ def bake_dynamic_chain():
 		progressWindow(edit=1,status=("Baking chain " + str(j) + " of " + str(i) + " :"))
 		j+=1
 		chainCtrl = str(obj)
-		#baseJoint = str(getAttr(chainCtrl + ".linkedBaseJoint"))
-		#endJoint = str(getAttr(chainCtrl + ".linkedEndJoint"))
 		bakingJoints = "{"
-		#currentJoint = [endJoint]
 		#Determine joints to be baked
 		all_dyn_joints = getAttr(chainCtrl + ".allDynJoints")
 		all_dyn_joints = all_dyn_joints.split(',')
@@ -981,38 +926,6 @@ def bake_dynamic_chain():
 		print "All joints controlled by " + chainCtrl + " have now been baked!\n"
 
 	progressWindow(endProgress = True)
-
-
-#///////////////////////////////////////////////////////////////////////////////////////
-# UI
-#///////////////////////////////////////////////////////////////////////////////////////
-class OverlapWindow(QtGui.QMainWindow):
-	def __init__(self):
-		super(OverlapWindow, self).__init__()
-		self.initUI()
-	
-	def initUI(self):
-		menu_bar = self.menuBar()
-		
-		open_file = QtGui.QAction('Open', self)
-		open_file.setShortcut('Ctrl+O')
-		open_file.setStatusTip('Open Character Prefs')
-		open_file.trigger.connect(self.showDialog)
-		
-		file_menu = menu_bar.addMenu('&File')
-		file_menu.addAction(openFile)
-		
-		self.setGeometry(300, 300, 350, 300)
-		self.show()
-	
-	def showDialog(self):
-		fname = QtGui.QFileDialog.getOpenFileName(self, 'Open file', '/home')
-		
-		f = open(fname, 'r')
-		
-		with f:
-			data = f.read()
-			self.charPrefs = data
 	
 #///////////////////////////////////////////////////////////////////////////////////////
 #								MAIN WINDOW
@@ -1027,7 +940,7 @@ def main():
 	scrollLayout(hst=0)
 	columnLayout('dynChainColumn')
 	#Dynamic Chain Creation Options Layout
-	frameLayout('creationOptions',h=175,
+	frameLayout('creationOptions',h=100,
 		borderStyle='etchedOut',
 		collapsable=False,
 		w=350,
@@ -1053,12 +966,6 @@ def main():
 	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
-	#text("Select control: ")
-	#button(c=lambda *args: overlap_tool.delete_baked_frames(), label = "Delete Baked Frames")
-	#text("Disable Dynamics: ")
-	#button(c=lambda *args: overlap_tool.disable_dynamics(), label="Disable Dynamics")
-	#text("Enable Dynamics: ")
-	#button(c=lambda *args: overlap_tool.enable_dynamics(), label="Enable Dynamics")
 	setParent('..')
 	#Bake Animation Layouts
 	separator(h=20,w=330)
@@ -1070,8 +977,6 @@ def main():
 	intField('startFrame')
 	intField('endFrame',value=400)
 	button(c=lambda *args: overlap_tool.bake_dynamic_chain(),label="Bake Dynamics")
-	
-	# XXX TODO Add section for opening prefs files.
 	setParent('..')
 	separator(h=20, w=330)
 	text("                               -Character Prefs-")
