@@ -102,7 +102,7 @@ def add_dynamic_attributes(jointCtrlObj):
 			Name of the controller object.
 	"""
 	global DYN_SMOOTHNESS
-	DYN_SMOOTHNESS = float(floatSliderGrp('sliderSmoothness', query = 1, value = 1))
+	DYN_SMOOTHNESS = float(floatSliderGrp('sliderLag', query = 1, value = 1))
 	addAttr(jointCtrlObj,
                 min=0,ln="controllerSize",max=500,keyable=True,at='double',dv=DYN_CONTROLLER_SIZE)
 	addAttr(jointCtrlObj,
@@ -449,20 +449,59 @@ def get_instance_number(prefix='', instance=0, suffix=''):
 	while objExists("{0}{1}{2}".format(prefix, instance, suffix)):
 		instance += 1
 	return instance
-	
-def get_all_controllers(node):
-	controls = []
-	children = node.getChildren()
+
+def pairwise(iterable):
+	a = iter(iterable)
+	return izip(a, a)
+
+def get_joints_per_control(controls, joint_names):
+	joints_per_control = []
+	for i, base_ctrl in enumerate(controls):
+		if (i+1) == len(controls):
+			break
+		joints_per_control.append(get_joint_count(base_ctrl, controls[i + 1]))
+	# Add the last number of joints for end control
+	diff_joint_num = len(joint_names) - sum(joints_per_control)
+	joints_per_control.append(diff_joint_num)
+	return joints_per_control
+
+def get_joint_count(base_ctrl, end_ctrl):
+	count = 0
+	if base_ctrl == end_ctrl:
+		return count
+	children = base_ctrl.getChildren()
 	if not children:
-		return None
-	else:
-		for child in children:
-			if str(child).endswith(NODE_SUFFIX):
-				controls.extend([child])
-			else:
-				controls.extend([get_all_controllers(child)])
+		return count
+	for child in children:
+		if isinstance(child, Joint):
+			count += 1
+		else:
+			count = count + get_joint_count(child, end_ctrl)
+	return count
+
+def get_all_controllers(cur_ctrl, end_ctrl):
+	controls = []
+	controls.append(cur_ctrl)
+	while cur_ctrl != end_ctrl:
+		next_ctrl = get_first_control(cur_ctrl)
+		controls.append(next_ctrl)
+		cur_ctrl = next_ctrl
 	return controls
-	
+
+def get_joint_information(cur_joint, end_joint):
+	joint_names = []
+	joint_pos = []
+	# Add the cur_joint
+	joint_names.append(cur_joint)
+	joint_pos.append(joint(cur_joint, q = 1, p = 1, a = 1))
+	while cur_joint != end_joint:
+		next_joint = get_first_joint(cur_joint)
+		joint_names.append(next_joint)
+		joint_pos.append(joint(next_joint, q=1, p=1, a=1))
+		cur_joint = next_joint
+	return joint_names, joint_pos
+		
+
 def get_first_joint(node):
 	""" Find the first joint by recursively going through the hierarchy.
 	Args:
@@ -470,8 +509,6 @@ def get_first_joint(node):
 	        	Node which to start searching.
 	                
 	"""
-	if isinstance(node, Joint):
-		return node
 	children = node.getChildren()
 	if not children:
 		return None
@@ -481,6 +518,8 @@ def get_first_joint(node):
 				return child
 			else:
 				first_joint = get_first_joint(child)
+				if first_joint:
+					return first_joint
 	return first_joint
 
 def get_first_control(node):
@@ -493,7 +532,9 @@ def get_first_control(node):
 				return child
 			else:
 				first_control = get_first_control(child)
-	return first_joint
+				if first_control:
+					return first_control
+	return first_control
 
 def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
 	""" Get all particle goals and add them as attributes to the dynamic controller.
@@ -520,7 +561,14 @@ def add_goal_attrs(jointCtrlObj, particle_system, goalPPs):
 		        ), 
 		        n='goal{0}'.format(i)))
 	return goal_attrs
-		
+
+def flatten(l):
+    for el in l:
+        if isinstance(el, collections.Iterable) and not isinstance(el, basestring):
+            for sub in flatten(el):
+                yield sub
+        else:
+            yield el
 #---------------------------------------------------------------------------------#
 # Main Functions
 #---------------------------------------------------------------------------------#
@@ -604,9 +652,10 @@ def create_dynamic_chain():
 		#String variable to house current joint being queried in the while loop.
 		currentJoint=baseJoint
 		select(baseJoint)
-		controls = get_all_controllers(currentJoint)
-		joint_names, jointPos, joints_per_control = get_joint_info(currentJoint, endJoint, controls)
-		#joint_names, jointPos = get_joints(currentJoint, endJoint)
+		controls = get_all_controllers(base_ctrl, end_ctrl)
+		joint_names, jointPos = get_joint_information(currentJoint, endJoint)
+		joints_per_control = get_joints_per_control(controls, joint_names)
+		#joint_names, jointPos, joints_per_control = get_joint_info(currentJoint, endJoint, controls)
 		
 	# Create the list of joints to be parent constrained to the FK joints
 	joint_list = []
@@ -986,35 +1035,15 @@ def main():
 	frameLayout('creationOptions',e=1,cl=True)
 	columnLayout(cw=350)
 	#Stiffness
-	floatSliderGrp('sliderSmoothness',min=0,max=10,
+	floatSliderGrp('sliderLag',min=0,max=10,
 		cw3=(60, 60, 60),
 		precision=3,
 		value=3,
-		label="Smoothness:",
+		label="Lag:",
 		field=True,
 		cal=[(1, 'left'), (2, 'left'), (3, 'left')])
-	##Damping
-	#floatSliderGrp('sliderDamping',min=0,max=100,
-		#cw3=(60, 60, 60),
-		#precision=3,
-		#value=10,
-		#label="Damping:",
-		#field=True,
-		#cal=[(1, 'left'), (2, 'left'), (3, 'left')])
-	##Drag
-	#floatSliderGrp('sliderDrag',min=0,max=1,
-		#cw3=(60, 60, 60),
-		#precision=3,
-		#value=.5,
-		#label="Drag:",
-		#field=True,
-		#cal=[(1, 'left'), (2, 'left'), (3, 'left')])
 	#Tip Constraint Checkbox
 	separator(h=20,w=330)
-	#checkBoxGrp('tipConstraintCheckbox',cw=(1, 200),label="Create Tip Constraint : ")
-	#checkBoxGrp('stretchCheckbox',cw=(1, 200),label="Allow Joint Chain to Stretch: ")
-	#checkBoxGrp('linkToJoints', cw = (1, 200), label = "Link to Joints *Cannot be locked*: ")
-	#separator -h 20  -w 330;
 	setParent('..')
 	setParent('..')
 	#Button Layouts
@@ -1022,8 +1051,6 @@ def main():
 	rowColumnLayout(nc=2,cw=[(1, 175), (2, 150)])
 	text("Select base joint, shift select tip: \n")
 	button(c=lambda *args: overlap_tool.create_dynamic_chain(),label="Make Dynamic")
-	#text("Select all ctrls and colliders: ")
-	#button(c=lambda *args: overlap_tool.collide_with_chain(),label="Make Collide")
 	text("Select control: ")
 	button(c=lambda *args: overlap_tool.delete_dynamic_chain(),label="Delete Dynamics")
 	#text("Select control: ")
